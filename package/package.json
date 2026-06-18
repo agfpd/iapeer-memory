@@ -10,11 +10,13 @@
   "files": [
     "src",
     "bin",
+    "docs",
     "tsconfig.json"
   ],
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
+    "prepack": "bun src/sync-docs.ts && cp ../LICENSE LICENSE",
     "preversion": "bun run test && bun run typecheck",
     "version": "bun src/sync-versions.ts && git add -A ..",
     "release": "npm version patch --workspaces-update=false && npm run release:finish",

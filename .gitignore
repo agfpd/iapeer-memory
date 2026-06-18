@@ -17,3 +17,10 @@ dist/
 # internal mechanics docs & specs — kept local for development, excluded from the public release
 docs/internals/
 docs/ТЗ-*.md
+
+# pack-time docs copy materialised into the facade package (build artifact, see package/src/sync-docs.ts)
+package/docs/
+
+# pack-time LICENSE copy materialised into each published package (Apache-2.0 §4(a); root LICENSE is outside the subdir packages)
+package/LICENSE
+core/LICENSE
