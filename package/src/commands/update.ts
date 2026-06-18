@@ -51,6 +51,7 @@ import { withProvisionLock } from "../surfaces/lock.js";
 import { sweepProvision } from "../surfaces/sweep.js";
 import { mcpPort } from "./provision-peer.js";
 import { guideText, guideTemplatePath, materialiseTemplates } from "../templates/index.js";
+import { packageDocsDir, scaffoldHostDocs } from "../host-docs.js";
 import { packageVersion } from "../version.js";
 import {
   DREAM_TARGET,
@@ -349,6 +350,16 @@ export function cmdUpdate(argv: string[], egress: Egress): number {
       writeHostWideGuideFragment(iapeerDir, guideText(locale, vaultPathForDoctrines));
       step("guide", `${guidePath} re-written (v${version}, vault path substituted)`);
     }
+  }
+
+  // 8d. on-host docs (ecosystem convention FU6): refresh the version-matched
+  // docs copy under <IAPEER_ROOT|~/.iapeer>/docs/iapeer-memory/. Best-effort —
+  // a missing source / fs error never fails update.
+  try {
+    const d = scaffoldHostDocs({ docsSource: packageDocsDir(), destDir: paths.hostDocsDir });
+    step("docs", d.action === "written" ? d.detail : `skipped — ${d.detail}`);
+  } catch (e) {
+    step("docs", `skipped — ${(e as Error).message}`);
   }
 
   // 9. memoryd managed restart (the watcher relaunches with the new binary)

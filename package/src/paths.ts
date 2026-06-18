@@ -63,6 +63,9 @@ export type MemoryPaths = {
    *  from `iapeer list --json`, consumed by memoryd's fragment renderer
    *  (docs/05: без карты пиры не получали paths-блок и индекс). */
   fleetMapPath: string;
+  /** On-host public docs copy (ecosystem convention FU6): one folder per
+   *  package under the storage root; written by init/update (host-docs.ts). */
+  hostDocsDir: string;
 };
 
 export function memoryPaths(
@@ -104,6 +107,7 @@ export function memoryPaths(
     launcherPath: path.join(path.dirname(configFile), "memoryd-launcher.sh"),
     dreamGateScriptPath: path.join(path.dirname(configFile), "dream-tick-gate.sh"),
     fleetMapPath: path.join(stateDir, "fleet.json"),
+    hostDocsDir: path.join(iapeerDir, "docs", "iapeer-memory"),
   };
 }
 

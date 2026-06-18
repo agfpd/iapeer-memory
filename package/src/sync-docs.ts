@@ -12,19 +12,53 @@
  *
  *     bun src/sync-docs.ts
  *
- * Local-only material is pruned to mirror `.gitignore` — it must never reach
- * the public tarball: `internals/` (internal mechanics) and root `ТЗ-*.md`
- * (specs).
+ * Local-only / OS-cruft material is pruned (see `pruneLocalDocs`): `internals/`
+ * (internal mechanics) and root `ТЗ-*.md` (specs) mirror `.gitignore`;
+ * `.DS_Store` (macOS) must reach neither the tarball nor the on-host docs copy.
+ * The same pruner is reused by the on-host docs scaffold (host-docs.ts).
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import { guardedRmSync } from "@agfpd/iapeer-memory-core";
 
-/** Doc subtrees kept local for development — pruned from the public package. */
+/** Doc subtrees kept local for development — pruned from any public copy. */
 export const DOCS_EXCLUDE_DIRS = ["internals"] as const;
-/** Root-level doc files (specs) kept local for development — pruned from the public package. */
+/** Root-level doc files (specs) kept local for development — pruned. */
 export const DOCS_EXCLUDE_ROOT = /^ТЗ-.*\.md$/;
+
+/** Strip local-only and OS-cruft material from a COPIED docs tree, in place:
+ *  `internals/` + root `ТЗ-*.md` (mirror `.gitignore`) and `.DS_Store` anywhere.
+ *  Shared by the prepack tarball sync and the on-host docs scaffold so both
+ *  exclude exactly the same set. */
+export function pruneLocalDocs(destDir: string): void {
+  for (const dir of DOCS_EXCLUDE_DIRS) {
+    guardedRmSync(path.join(destDir, dir), { recursive: true, force: true });
+  }
+  for (const entry of fs.readdirSync(destDir)) {
+    if (DOCS_EXCLUDE_ROOT.test(entry)) {
+      guardedRmSync(path.join(destDir, entry), { recursive: true, force: true });
+    }
+  }
+  removeDsStore(destDir);
+}
+
+/** `.DS_Store` can sit in any subdirectory of a macOS-touched tree. */
+function removeDsStore(dir: string): void {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) removeDsStore(p);
+    else if (entry.name === ".DS_Store") guardedRmSync(p, { force: true });
+  }
+}
+
+export function countDocsFiles(dir: string): number {
+  let n = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    n += entry.isDirectory() ? countDocsFiles(path.join(dir, entry.name)) : 1;
+  }
+  return n;
+}
 
 export function syncDocs(opts: { rootDir: string; pkgDir: string }): {
   destDir: string;
@@ -35,25 +69,8 @@ export function syncDocs(opts: { rootDir: string; pkgDir: string }): {
   // Rebuild from scratch so source deletions don't linger in the artifact.
   guardedRmSync(destDir, { recursive: true, force: true });
   fs.cpSync(srcDir, destDir, { recursive: true });
-  // Prune local-only material (mirrors .gitignore) after the copy — explicit
-  // deletion is unambiguous regardless of cpSync filter directory semantics.
-  for (const dir of DOCS_EXCLUDE_DIRS) {
-    guardedRmSync(path.join(destDir, dir), { recursive: true, force: true });
-  }
-  for (const entry of fs.readdirSync(destDir)) {
-    if (DOCS_EXCLUDE_ROOT.test(entry)) {
-      guardedRmSync(path.join(destDir, entry), { recursive: true, force: true });
-    }
-  }
-  return { destDir, files: countFiles(destDir) };
-}
-
-function countFiles(dir: string): number {
-  let n = 0;
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    n += entry.isDirectory() ? countFiles(path.join(dir, entry.name)) : 1;
-  }
-  return n;
+  pruneLocalDocs(destDir);
+  return { destDir, files: countDocsFiles(destDir) };
 }
 
 if (import.meta.main) {

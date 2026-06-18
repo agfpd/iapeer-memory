@@ -54,6 +54,7 @@ import {
 } from "../templates/index.js";
 import { packageVersion } from "../version.js";
 import { paintStatus, ui } from "../ui.js";
+import { packageDocsDir, scaffoldHostDocs } from "../host-docs.js";
 import {
   DREAM_TARGET,
   dreamTimerMessage,
@@ -650,6 +651,16 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
     // placeholder left peers without the write path).
     const guidePath = writeHostWideGuideFragment(iapeerDir, guideText(locale, vault));
     step("guide", guidePath);
+  }
+
+  // 11. on-host docs (ecosystem convention FU6): mirror the published docs into
+  // <IAPEER_ROOT|~/.iapeer>/docs/iapeer-memory/ — version-matched, agent-readable
+  // on the host. Best-effort: a missing source / fs error never fails init.
+  try {
+    const d = scaffoldHostDocs({ docsSource: packageDocsDir(), destDir: paths.hostDocsDir });
+    step("docs", d.action === "written" ? d.detail : `skipped — ${d.detail}`);
+  } catch (e) {
+    step("docs", `skipped — ${(e as Error).message}`);
   }
 
   console.log(
