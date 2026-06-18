@@ -70,7 +70,7 @@ note on the same topic became stale: flip its \`status\` to the final token.
 
 From you: BODY + ≥1 tag from the dictionary + organic inline \`[[...]]\` links + a self-describing TITLE (= the filename). Path: \`{{VAULT_PATH}}/01_Knowledge/<Clear title>.md\`; frontmatter between \`---\` fences with \`tags: [Tag1, Tag2]\`, then the body.
 
-Tags come from the dictionary \`99_System/Tags.md\`, ≥1 per canon note. No fitting tag? Add a new one to the dictionary (explicitly, not on the fly), then use it — extending the dictionary is expected, and proactive when there's a need.
+Tags come from the dictionary \`99_System/Tags.md\`, ≥1 per canon note. No fitting tag? Add a new one to the dictionary (explicitly, not on the fly) and use it right away — ANY author may add one when needed, no waiting. The Index CURATES the dictionary (dedup of near-duplicates, boundary coherence), so add deliberately rather than duplicating; the roles are complementary (you add, the Index keeps it coherent).
 
 **Links: inline and the \`## Links\` block.** A \`[[Note]]\` reference comes in two forms — both go into the graph equally:
 - **inline** — right in the text, when the note IS part of what you're saying ("as in [[X]]").

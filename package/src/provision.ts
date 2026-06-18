@@ -66,15 +66,16 @@ export function overviewTemplateContent(taxonomy: TaxonomyPreset): string {
   ].join("\n");
 }
 
-/** Empty tags dictionary seed — the Index grows it (docs/07). */
+/** Empty tags dictionary seed — any author adds a row when none fits; the
+ *  Index curates it (dedup, boundary coherence) — docs/07. */
 export function tagsDictionaryContent(taxonomy: TaxonomyPreset): string {
   const ru = taxonomy.locale === "ru";
   return [
     ru ? "## Доменные теги" : "## Domain tags",
     "",
     ru
-      ? "<!-- Канонический список top-level доменных тегов. Ведёт Index; новый домен — строка в таблице. Граница обязательна для пересекающихся доменов. -->"
-      : "<!-- The canonical list of top-level domain tags. Curated by the Index; a new domain = a new table row. The boundary phrase is mandatory for overlapping domains. -->",
+      ? "<!-- Канонический список top-level доменных тегов. Нет подходящего — любой автор добавляет строку (явно, по потребности) и сразу пользуется; Index курирует словарь (дедуп близких, связность границ). Граница обязательна для пересекающихся доменов. -->"
+      : "<!-- The canonical list of top-level domain tags. No fitting tag — any author adds a row (explicitly, when needed) and uses it; the Index curates the dictionary (dedup of near-duplicates, boundary coherence). The boundary phrase is mandatory for overlapping domains. -->",
     "",
     ru ? "| Тег | Граница — про что (опционально) |" : "| Tag | Boundary — what it covers (optional) |",
     "|---|---|",
