@@ -19,6 +19,7 @@
 import fs from "node:fs";
 import type { Egress } from "../egress.js";
 import { memoryPaths } from "../paths.js";
+import { ui } from "../ui.js";
 import { removeBinary } from "../binary.js";
 import { readFleetMap } from "../fleet.js";
 import { readSlot, removeSlot, SLOT_PROVIDER } from "../slot.js";
@@ -92,6 +93,10 @@ export function cmdUninstall(argv: string[], egress: Egress): number {
 
   const paths = memoryPaths();
   let failed = false;
+  // Consistent CLI look (onboard's uninstall-verb surfaces this): the "label :"
+  // key is dim, the outcome word is colored by its sentiment, bare paths dim.
+  const row = (label: string, detail: string): void =>
+    console.log(`${ui.dim(`${label.padEnd(10)}:`)} ${detail}`);
 
   // Direct session surfaces OFF across the fleet BEFORE removing the
   // declaration (ADR-009 v1.2 mirror symmetry: a dead provider's surfaces
@@ -100,9 +105,11 @@ export function cmdUninstall(argv: string[], egress: Egress): number {
   if (declared && declared.provider === SLOT_PROVIDER) {
     const fleet = readFleetMap(paths.fleetMapPath);
     if (!fleet) {
-      console.log(
-        `surfaces  : fleet map missing/unreadable (${paths.fleetMapPath}) — nothing swept; ` +
-          "manual per peer: iapeer-memory unprovision-peer --cwd <cwd> --runtime <r>",
+      row(
+        "surfaces",
+        ui.gray("fleet map missing/unreadable (") +
+          ui.dim(paths.fleetMapPath) +
+          ui.gray(") — nothing swept; manual per peer: iapeer-memory unprovision-peer --cwd <cwd> --runtime <r>"),
       );
     } else {
       const locked = withProvisionLock({
@@ -110,22 +117,26 @@ export function cmdUninstall(argv: string[], egress: Egress): number {
         fn: () => sweepUnprovision({ fleet }),
       });
       if (!locked.acquired) {
-        console.log(`surfaces  : ${locked.detail}`);
+        row("surfaces", ui.red(locked.detail));
         failed = true;
       } else {
         const { results, skipped } = locked.result;
         const bad = results.filter((r) => !r.ok);
-        console.log(
-          `surfaces  : stripped from ${results.length - bad.length}/${results.length} peer-runtime(s)` +
-            (skipped.length ? ` (${skipped.length} skipped)` : ""),
+        row(
+          "surfaces",
+          ui.green(`stripped from ${results.length - bad.length}/${results.length} peer-runtime(s)`) +
+            (skipped.length ? ui.gray(` (${skipped.length} skipped)`) : ""),
         );
         for (const b of bad) {
           failed = true;
-          console.log(
-            `surfaces  : FAIL ${b.personality}:${b.runtime} — ${b.outcomes
-              .filter((o) => o.action === "failed")
-              .map((o) => `${o.surface}: ${o.detail ?? "failed"}`)
-              .join("; ")}`,
+          row(
+            "surfaces",
+            ui.red(
+              `FAIL ${b.personality}:${b.runtime} — ${b.outcomes
+                .filter((o) => o.action === "failed")
+                .map((o) => `${o.surface}: ${o.detail ?? "failed"}`)
+                .join("; ")}`,
+            ),
           );
         }
       }
@@ -135,20 +146,23 @@ export function cmdUninstall(argv: string[], egress: Egress): number {
     // channel is REMOVED (ADR-017) — no core verb is shelled; the manual
     // recipe works without the slot.
     if (declared.plugin) {
-      console.log(
-        "plugin    : legacy v1.1 session plugin is NOT auto-removed (channel removed, ADR-017) — manual: " +
-          "per claude peer `claude plugin uninstall iapeer-memory@agfpd --scope project` from its cwd; " +
-          "codex (host-global): `codex plugin remove iapeer-memory@agfpd`",
+      row(
+        "plugin",
+        ui.gray(
+          "legacy v1.1 session plugin is NOT auto-removed (channel removed, ADR-017) — manual: " +
+            "per claude peer `claude plugin uninstall iapeer-memory@agfpd --scope project` from its cwd; " +
+            "codex (host-global): `codex plugin remove iapeer-memory@agfpd`",
+        ),
       );
     }
   }
 
   const slot = removeSlot(paths.slotPath);
   if (slot === "refused-foreign") {
-    console.log("slot      : held by a FOREIGN provider — left intact");
+    row("slot", ui.red("held by a FOREIGN provider — left intact"));
     failed = true;
   } else {
-    console.log(`slot      : ${slot === "removed" ? "declaration removed" : "already absent"}`);
+    row("slot", slot === "removed" ? ui.green("declaration removed") : ui.gray("already absent"));
   }
 
   // notifier wiring: best-effort unregister of all three triggers (not-found
@@ -170,36 +184,41 @@ export function cmdUninstall(argv: string[], egress: Egress): number {
     return last;
   };
   const unreg = unregAcross((runtime) => unregisterWatcher(egress, { runtime, iapeerBin }));
-  console.log(
-    `watcher   : ${
-      unreg.ok
-        ? `unregister sent for ${WATCHER_TRIGGER_ID}`
-        : `unregister not sent (${unreg.detail}) — remove the trigger manually via the watcher peer`
-    }`,
+  row(
+    "watcher",
+    unreg.ok
+      ? ui.green(`unregister sent for ${WATCHER_TRIGGER_ID}`)
+      : ui.gray(`unregister not sent (${unreg.detail}) — remove the trigger manually via the watcher peer`),
   );
   for (const id of [LEGACY_SWEEP_TRIGGER_ID, DREAM_TRIGGER_ID]) {
     const t = unregAcross((runtime) => unregisterTimer(egress, { id, runtime, iapeerBin }));
-    console.log(
-      `timer     : ${
-        t.ok
-          ? `unregister sent for ${id}`
-          : `unregister not sent for ${id} (${t.detail}) — remove manually via the timer peer`
-      }`,
+    row(
+      "timer",
+      t.ok
+        ? ui.green(`unregister sent for ${id}`)
+        : ui.gray(`unregister not sent for ${id} (${t.detail}) — remove manually via the timer peer`),
     );
   }
 
-  console.log(`memoryd   : ${stopMemorydByPidFile(egress, paths.pidPath)}`);
+  const memoryd = stopMemorydByPidFile(egress, paths.pidPath);
+  row("memoryd", /sent|removed/.test(memoryd) ? ui.green(memoryd) : ui.gray(memoryd));
 
   if (keepBinary) {
-    console.log(`binary    : kept (${paths.binaryPath})`);
+    row("binary", ui.gray("kept (") + ui.dim(paths.binaryPath) + ui.gray(")"));
   } else {
-    console.log(`binary    : ${removeBinary(paths.binaryPath) === "removed" ? `removed ${paths.binaryPath}` : "already absent"}`);
+    row(
+      "binary",
+      removeBinary(paths.binaryPath) === "removed"
+        ? ui.green("removed ") + ui.dim(paths.binaryPath)
+        : ui.gray("already absent"),
+    );
   }
 
-  console.log(`vault     : NOT touched (user data)`);
-  console.log(`config    : NOT touched (${paths.configFile} — operator-owned)`);
-  console.log(
-    "native    : fleet auto-memory stays OFF — restoring it is a manual decision; core lever: iapeer native-memory on --all",
+  row("vault", ui.gray("NOT touched (user data)"));
+  row("config", ui.gray("NOT touched (") + ui.dim(paths.configFile) + ui.gray(" — operator-owned)"));
+  row(
+    "native",
+    ui.gray("fleet auto-memory stays OFF — restoring it is a manual decision; core lever: iapeer native-memory on --all"),
   );
 
   return failed ? 1 : 0;
