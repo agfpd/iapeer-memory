@@ -2,8 +2,9 @@
 
 **Shared memory for a team of AI agents — the memory component of [iapeer](https://github.com/agfpd/iapeer).**
 
+[![CI](https://github.com/agfpd/iapeer-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/agfpd/iapeer-memory/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@agfpd/iapeer-memory)](https://www.npmjs.com/package/@agfpd/iapeer-memory)
-[![license](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
+[![license](https://img.shields.io/npm/l/@agfpd/iapeer-memory)](./LICENSE)
 [![platform](https://img.shields.io/badge/platform-macOS-lightgrey)](#quick-start)
 
 iapeer-memory gives a team of [iapeer](https://github.com/agfpd/iapeer) agents one shared, long-term memory. One agent writes down a finding — the whole team retrieves it by search, across session restarts and context compaction. The package IS the system: a daemon, search, and curators over plain markdown files.
