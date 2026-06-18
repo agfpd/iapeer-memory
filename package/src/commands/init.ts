@@ -59,6 +59,7 @@ import {
   patchWakePolicyEphemeral,
   registerTimer,
   registerWatcher,
+  resolveRegistrantRuntime,
   writeDreamGateScript,
   writeLauncherScript,
 } from "../watcher.js";
@@ -69,6 +70,10 @@ type InitFlags = {
   human?: string;
   embeddingEndpoint?: string;
   rerankerEndpoint?: string;
+  /** Host agentic runtime, passed by onboard (which detects it): role peers are
+   *  created with it AND watcher/timer register from it — ONE runtime end-to-end
+   *  (contract with iapeer/onboard). Omitted on a no-runtime host → degrade. */
+  runtime?: string;
   /** Curation mode (lean §7); default lean for new installs. */
   mode?: string;
   nonInteractive: boolean;
@@ -101,6 +106,7 @@ function parseFlags(argv: string[]): InitFlags | null {
       case "--human": f.human = take(); break;
       case "--embedding-endpoint": f.embeddingEndpoint = take(); break;
       case "--reranker-endpoint": f.rerankerEndpoint = take(); break;
+      case "--runtime": f.runtime = take(); break;
       case "--mode": f.mode = take(); break;
       case "--non-interactive": f.nonInteractive = true; break;
       case "--skip-deps": f.skipDeps = true; break;
@@ -176,7 +182,12 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
   let localeRaw = flags.locale ?? "";
   let human = flags.human ?? "";
   let embeddingEndpoint = flags.embeddingEndpoint ?? "";
-  const rerankerEndpoint = flags.rerankerEndpoint ?? "";
+  let rerankerEndpoint = flags.rerankerEndpoint ?? "";
+  // Host runtime from onboard (it detects the host's agentic runtime). Threaded
+  // into `iapeer create --runtime` AND watcher/timer registration — one runtime
+  // end-to-end. Absent (onboard omits it on a no-runtime host) → create fails
+  // and init degrades to the BM25 base (see step 6/7).
+  const flagRuntime = (flags.runtime ?? "").trim();
 
   const peers = flags.skipEcosystem ? null : listPeers(egress, flags.iapeerBin);
   const humanDefault = flags.human ?? naturalPeerDefault(peers) ?? "";
@@ -221,9 +232,22 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
   }
   if (!embeddingEndpoint && interactive) {
     embeddingEndpoint = ask(
-      "Embedding endpoint (OpenAI-compatible; empty = BM25-only)",
+      "Embedding endpoint (OpenAI-compatible URL; Enter = пропустить → BM25-only, включишь позже в config.env)",
       "",
     );
+  }
+  // Reranker layers on top of the hybrid fusion — only meaningful WITH
+  // embeddings. Ask for it only when an embedding endpoint was given; otherwise
+  // a one-line pointer (it stays configurable in config.env either way).
+  if (!rerankerEndpoint && interactive) {
+    if (embeddingEndpoint) {
+      rerankerEndpoint = ask(
+        "Reranker endpoint (TEI /rerank URL; Enter = пропустить, добавишь позже в config.env)",
+        "",
+      );
+    } else {
+      console.log("      Reranker: пропущен (нужны эмбеддинги) — добавишь в config.env позже");
+    }
   }
 
   const paths = memoryPaths();
@@ -305,6 +329,11 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
   // 6. role peers + doctrines + manifest. Personalities are namespaced
   // memory-<role> (collision-proof by design); the manifest keeps the
   // CONCEPTUAL role keys.
+  // No-runtime degrade: a host with no agentic runtime can't run role peers —
+  // `iapeer create` fails, init provisions the BM25 base and skips role peers +
+  // notifier wiring (contract: onboard omits --runtime on such a host).
+  let noRuntimeDegrade = false;
+  let noRuntimeDetail = "";
   if (flags.skipEcosystem) {
     step("roles", "skipped (--skip-ecosystem)");
   } else {
@@ -315,63 +344,88 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
       const personality = rolePersonality(role);
       const exists = (peers ?? []).some((p) => p.personality === personality);
       if (!exists) {
-        const created = run(egress, [flags.iapeerBin ?? IAPEER_BIN, "create", personality], { explicitBin: flags.iapeerBin !== undefined });
+        // Thread the host runtime through create (onboard's detected runtime) —
+        // the peer is DECLARED with it, and watcher/timer later register from the
+        // same declaration (step 7). Absent → core resolves its own default.
+        const createArgs = [flags.iapeerBin ?? IAPEER_BIN, "create", personality];
+        if (flagRuntime) createArgs.push("--runtime", flagRuntime);
+        const created = run(egress, createArgs, { explicitBin: flags.iapeerBin !== undefined });
         if (created.exitCode !== 0) {
           rolesOk = false;
+          // No --runtime passed AND create failed → no agentic runtime on the
+          // host: degrade (don't half-provision the rest of the role peers).
+          if (!flagRuntime) {
+            noRuntimeDegrade = true;
+            noRuntimeDetail = created.stderr.trim();
+            break;
+          }
           console.log(`      roles       create ${personality} failed: ${created.stderr.trim()}`);
           continue;
         }
         createdAny = true;
       }
     }
-    // peerCwd: the registry FACT when the core exposes it (`cwd` in
-    // `iapeer list --json` — iapeer 0.2.14), otherwise the core's
-    // DOCUMENTED create default (no --path — by requirement;
-    // IAPEER_ROOT-aware).
-    const freshPeers = createdAny ? listPeers(egress, flags.iapeerBin) : peers;
-    for (const role of ROLE_NAMES) {
-      const personality = rolePersonality(role);
-      const registryCwd = (freshPeers ?? []).find((p) => p.personality === personality)?.cwd;
-      const peerCwd = registryCwd || path.join(iapeerDir, "peers", personality);
-      // COLLISION GUARD («index» уже бывал занят живым Индексом
-      // предшественника; бренд-имена ролей — by decision, защита
-      // целиком здесь): a pre-existing peer whose doctrine is NOT ours is
-      // somebody else's — rendering over it would hijack a live peer.
-      // FAIL loud with a recipe, never render.
-      if (doctrineOwnership(peerCwd) === "foreign") {
-        rolesOk = false;
-        console.log(
-          `      roles       COLLISION: peer "${personality}" exists with a foreign doctrine ` +
-            `(${path.join(peerCwd, ".iapeer", "IAPEER.md")}) — not touching it. Recipe: ` +
-            `rename/remove that peer (iapeer stop ${personality} && iapeer remove ${personality}) ` +
-            `or move its cwd, then re-run init`,
-        );
-        continue;
+    if (noRuntimeDegrade) {
+      // Graceful degrade — the BM25 base IS provisioned (success), only the
+      // role peers wait on a runtime. Non-fatal (init exits 0): onboard proceeds
+      // and surfaces the advisory; `verify --repair` wires the rest once a
+      // runtime is installed.
+      step(
+        "roles",
+        "skipped — no agentic runtime installed (Claude Code / Codex). Base provisioned; " +
+          "install a runtime, then `iapeer-memory verify --repair` to wire role peers + triggers" +
+          (noRuntimeDetail ? ` (iapeer: ${noRuntimeDetail})` : ""),
+      );
+    } else {
+      // peerCwd: the registry FACT when the core exposes it (`cwd` in
+      // `iapeer list --json` — iapeer 0.2.14), otherwise the core's
+      // DOCUMENTED create default (no --path — by requirement;
+      // IAPEER_ROOT-aware).
+      const freshPeers = createdAny ? listPeers(egress, flags.iapeerBin) : peers;
+      for (const role of ROLE_NAMES) {
+        const personality = rolePersonality(role);
+        const registryCwd = (freshPeers ?? []).find((p) => p.personality === personality)?.cwd;
+        const peerCwd = registryCwd || path.join(iapeerDir, "peers", personality);
+        // COLLISION GUARD («index» уже бывал занят живым Индексом
+        // предшественника; бренд-имена ролей — by decision, защита
+        // целиком здесь): a pre-existing peer whose doctrine is NOT ours is
+        // somebody else's — rendering over it would hijack a live peer.
+        // FAIL loud with a recipe, never render.
+        if (doctrineOwnership(peerCwd) === "foreign") {
+          rolesOk = false;
+          console.log(
+            `      roles       COLLISION: peer "${personality}" exists with a foreign doctrine ` +
+              `(${path.join(peerCwd, ".iapeer", "IAPEER.md")}) — not touching it. Recipe: ` +
+              `rename/remove that peer (iapeer stop ${personality} && iapeer remove ${personality}) ` +
+              `or move its cwd, then re-run init`,
+          );
+          continue;
+        }
+        const template = roleTemplatePath(paths.templatesDir, locale, role);
+        const rendered = renderDoctrine({ templatePath: template, peerCwd, version, vaultPath: vault });
+        if (rendered.action === "missing-template") {
+          rolesOk = false;
+          console.log(`      roles       ${role}: template missing at ${template}`);
+          continue;
+        }
+        roleEntries.push({ role, peerCwd, template });
       }
-      const template = roleTemplatePath(paths.templatesDir, locale, role);
-      const rendered = renderDoctrine({ templatePath: template, peerCwd, version, vaultPath: vault });
-      if (rendered.action === "missing-template") {
-        rolesOk = false;
-        console.log(`      roles       ${role}: template missing at ${template}`);
-        continue;
-      }
-      roleEntries.push({ role, peerCwd, template });
+      writeRolesManifest({ rolesManifestPath: paths.rolesManifestPath, roles: roleEntries });
+      // ALL curators (Index/Scriber/DreamWeaver) are TICK-STATELESS — each wakes
+      // for a discrete pass (CURATOR_TICK / dream-tick / on-demand) and carries
+      // no state between wakes. They run EPHEMERAL (a clean session per wake): a
+      // PERSISTENT session would accumulate a STALE model after a deploy — exactly
+      // the migration class an ephemeral flip structurally kills. Patch the one
+      // key into each core-owned profile, no-clobber.
+      const wakePolicies = roleEntries.map((r) => `${r.role}:${patchWakePolicyEphemeral(r.peerCwd)}`);
+      const wakeOk = wakePolicies.every((w) => !w.endsWith("missing-profile"));
+      step(
+        "roles",
+        `${roleEntries.map((r) => rolePersonality(r.role as (typeof ROLE_NAMES)[number])).join(", ")} ` +
+          `(doctrines v${version}, wake_policy ${wakePolicies.join(" ")}, manifest ${paths.rolesManifestPath})`,
+        rolesOk && roleEntries.length === ROLE_NAMES.length && wakeOk,
+      );
     }
-    writeRolesManifest({ rolesManifestPath: paths.rolesManifestPath, roles: roleEntries });
-    // ALL curators (Index/Scriber/DreamWeaver) are TICK-STATELESS — each wakes
-    // for a discrete pass (CURATOR_TICK / dream-tick / on-demand) and carries
-    // no state between wakes. They run EPHEMERAL (a clean session per wake): a
-    // PERSISTENT session would accumulate a STALE model after a deploy — exactly
-    // the migration class an ephemeral flip structurally kills. Patch the one
-    // key into each core-owned profile, no-clobber.
-    const wakePolicies = roleEntries.map((r) => `${r.role}:${patchWakePolicyEphemeral(r.peerCwd)}`);
-    const wakeOk = wakePolicies.every((w) => !w.endsWith("missing-profile"));
-    step(
-      "roles",
-      `${roleEntries.map((r) => rolePersonality(r.role as (typeof ROLE_NAMES)[number])).join(", ")} ` +
-        `(doctrines v${version}, wake_policy ${wakePolicies.join(" ")}, manifest ${paths.rolesManifestPath})`,
-      rolesOk && roleEntries.length === ROLE_NAMES.length && wakeOk,
-    );
   }
 
   // 6b. fleet map — personality → cwd for memoryd's fragment renderer
@@ -404,46 +458,68 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
   if (flags.skipEcosystem) {
     step("watcher", "skipped (--skip-ecosystem)");
     step("timers", "skipped (--skip-ecosystem)");
+  } else if (noRuntimeDegrade) {
+    // Graceful (see roles step) — non-fatal: nothing to register without role peers.
+    step("watcher", "skipped — no agentic runtime (role peers not provisioned; see roles)");
+    step("dream", "skipped — no agentic runtime");
   } else {
-    writeLauncherScript({ launcherPath: paths.launcherPath, binaryPath: paths.binaryPath });
-    const sent = registerWatcher(egress, {
-      launcherPath: paths.launcherPath,
-      target: plan.eventTarget ?? undefined, // null (full-lean) → default placeholder; memoryd emits nothing
-      iapeerBin: flags.iapeerBin,
-    });
-    step(
-      "watcher",
-      sent.suppressed
-        ? "skipped (test sandbox — sends suppressed)"
-        : sent.ok
-          ? `registered (launches memoryd; curation target: ${plan.eventTarget ?? "none — lean: base runs, curation silent"}); confirm: iapeer-memory verify`
-          : `registration failed — ${sent.detail}`,
-      sent.ok || Boolean(sent.suppressed),
-    );
-
-    if (plan.dream) {
-      writeDreamGateScript({
-        dreamGateScriptPath: paths.dreamGateScriptPath,
-        binaryPath: paths.binaryPath,
-      });
-      const dream = registerTimer(egress, {
-        message: dreamTimerMessage({
-          cron: process.env.IAPEER_MEMORY_DREAM_CRON,
-          dreamGateScriptPath: paths.dreamGateScriptPath,
-        }),
+    // The registrant identity's runtime is the index role peer's DECLARED
+    // runtime: the host runtime onboard passed (--runtime), else read back from
+    // the registry (`default_runtime`). NEVER a hardcoded "claude" — a codex role
+    // peer must register as `codex-index` or the notifier refuses the trigger.
+    const registrationRuntime =
+      flagRuntime || resolveRegistrantRuntime(egress, { iapeerBin: flags.iapeerBin }) || "";
+    if (!registrationRuntime) {
+      step(
+        "watcher",
+        "skipped — could not resolve the index peer's runtime from the registry; " +
+          "run `iapeer-memory verify --repair` once the runtime is set",
+        false,
+      );
+      step("dream", "skipped (index runtime unresolved)");
+    } else {
+      writeLauncherScript({ launcherPath: paths.launcherPath, binaryPath: paths.binaryPath });
+      const sent = registerWatcher(egress, {
+        launcherPath: paths.launcherPath,
+        target: plan.eventTarget ?? undefined, // null (full-lean) → default placeholder; memoryd emits nothing
+        runtime: registrationRuntime,
         iapeerBin: flags.iapeerBin,
       });
       step(
-        "dream",
-        dream.suppressed
-          ? "skipped (test sandbox)"
-          : dream.ok
-            ? `dream-tick (weekly, gated → ${DREAM_TARGET})`
-            : `dream: ${dream.detail}`,
-        dream.ok || Boolean(dream.suppressed),
+        "watcher",
+        sent.suppressed
+          ? "skipped (test sandbox — sends suppressed)"
+          : sent.ok
+            ? `registered (launches memoryd; curation target: ${plan.eventTarget ?? "none — lean: base runs, curation silent"}); confirm: iapeer-memory verify`
+            : `registration failed — ${sent.detail}`,
+        sent.ok || Boolean(sent.suppressed),
       );
-    } else {
-      step("dream", `not registered (mode ${mode}: dreamweaver not proactive)`);
+
+      if (plan.dream) {
+        writeDreamGateScript({
+          dreamGateScriptPath: paths.dreamGateScriptPath,
+          binaryPath: paths.binaryPath,
+        });
+        const dream = registerTimer(egress, {
+          message: dreamTimerMessage({
+            cron: process.env.IAPEER_MEMORY_DREAM_CRON,
+            dreamGateScriptPath: paths.dreamGateScriptPath,
+          }),
+          runtime: registrationRuntime,
+          iapeerBin: flags.iapeerBin,
+        });
+        step(
+          "dream",
+          dream.suppressed
+            ? "skipped (test sandbox)"
+            : dream.ok
+              ? `dream-tick (weekly, gated → ${DREAM_TARGET})`
+              : `dream: ${dream.detail}`,
+          dream.ok || Boolean(dream.suppressed),
+        );
+      } else {
+        step("dream", `not registered (mode ${mode}: dreamweaver not proactive)`);
+      }
     }
   }
 

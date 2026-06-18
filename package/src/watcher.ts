@@ -196,12 +196,56 @@ export type IapSendResult = {
 
 /** Default registrant personality (trigger owner + event target). */
 const DEFAULT_REGISTRANT = "index";
-/** Role peers are claude-runtime sessions (init creates them via `iapeer create`). */
-const DEFAULT_FROM_RUNTIME = "claude";
 
-/** `--from` wants the full identity `<runtime>-<personality>`, never a bare name. */
-export function fromIdentity(personality: string, runtime = DEFAULT_FROM_RUNTIME): string {
+/** `--from` wants the full identity `<runtime>-<personality>`, never a bare
+ *  name. The runtime is REQUIRED and MUST be the registrant's ACTUAL declared
+ *  runtime (resolveRegistrantRuntime / the host-runtime onboard passed) — never
+ *  assumed. A hardcoded "claude" here registered a codex role peer as
+ *  `claude-index`, which the notifier refused ("runtime claude not declared for
+ *  index"); the runtime now flows from the peer's declaration. */
+export function fromIdentity(personality: string, runtime: string): string {
   return `${runtime}-${personality}`;
+}
+
+/** The registrant role peer's DECLARED runtime, read from the live registry
+ *  (`iapeer list --json`: per-peer `default_runtime` is the canonical default,
+ *  `runtimes[{runtime,status}]` the fallback). Returns null when the peer is
+ *  absent or carries no declared runtime — the caller then SKIPS registration
+ *  (degrade) instead of guessing a runtime. This is the single source of truth
+ *  for the `--from` identity across init / update / verify / uninstall. */
+export function resolveRegistrantRuntime(
+  egress: Egress,
+  opts: { iapeerBin?: string; registrant?: string } = {},
+): string | null {
+  const registrant = opts.registrant ?? DEFAULT_REGISTRANT;
+  const bin = opts.iapeerBin ?? IAPEER_BIN;
+  const proc = egress.spawnSync([bin, "list", "--json"], {
+    explicitBin: opts.iapeerBin !== undefined,
+  });
+  if (proc.refused || proc.spawnError || proc.exitCode !== 0) return null;
+  let rows: unknown;
+  try {
+    rows = JSON.parse(proc.stdout);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(rows)) return null;
+  const row = rows.find(
+    (r): r is { default_runtime?: unknown; runtimes?: unknown } =>
+      typeof (r as { personality?: unknown })?.personality === "string" &&
+      (r as { personality: string }).personality === registrant,
+  );
+  if (!row) return null;
+  if (typeof row.default_runtime === "string" && row.default_runtime.trim()) {
+    return row.default_runtime.trim();
+  }
+  if (Array.isArray(row.runtimes)) {
+    for (const rt of row.runtimes) {
+      const name = (rt as { runtime?: unknown })?.runtime;
+      if (typeof name === "string" && name.trim()) return name.trim();
+    }
+  }
+  return null;
 }
 
 function iapSend(
@@ -248,7 +292,7 @@ export function registerWatcher(
     /** Registrant PERSONALITY (owner of the durable trigger + default target). */
     registrant?: string;
     /** Runtime prefix of the registrant's identity (claude for role peers). */
-    runtime?: string;
+    runtime: string;
     target?: string;
     id?: string;
     iapeerBin?: string;
@@ -272,7 +316,7 @@ export function unregisterWatcher(
   egress: Egress,
   opts: {
     registrant?: string;
-    runtime?: string;
+    runtime: string;
     id?: string;
     iapeerBin?: string;
   },
@@ -291,7 +335,7 @@ export function registerTimer(
   opts: {
     message: string;
     registrant?: string;
-    runtime?: string;
+    runtime: string;
     iapeerBin?: string;
   },
 ): IapSendResult {
@@ -308,7 +352,7 @@ export function unregisterTimer(
   opts: {
     id: string;
     registrant?: string;
-    runtime?: string;
+    runtime: string;
     iapeerBin?: string;
   },
 ): IapSendResult {

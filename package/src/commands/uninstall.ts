@@ -28,6 +28,7 @@ import { guardedUnlinkSync } from "@agfpd/iapeer-memory-core";
 import {
   DREAM_TRIGGER_ID,
   LEGACY_SWEEP_TRIGGER_ID,
+  resolveRegistrantRuntime,
   unregisterTimer,
   unregisterWatcher,
   WATCHER_TRIGGER_ID,
@@ -152,7 +153,23 @@ export function cmdUninstall(argv: string[], egress: Egress): number {
 
   // notifier wiring: best-effort unregister of all three triggers (not-found
   // is soft on the notifier side; teaching replies go to the index session).
-  const unreg = unregisterWatcher(egress, { iapeerBin });
+  // The `--from` identity must carry the index peer's DECLARED runtime (the
+  // notifier refuses a wrong runtime) — read it from the registry. If it can't
+  // be resolved (peer already gone / core unreachable), try each agentic runtime
+  // so a trigger is never orphaned by a single wrong guess (no hardcode claude).
+  const declaredRuntime = resolveRegistrantRuntime(egress, { iapeerBin });
+  const tryRuntimes = declaredRuntime ? [declaredRuntime] : ["claude", "codex"];
+  const unregAcross = (
+    send: (runtime: string) => { ok: boolean; detail: string },
+  ): { ok: boolean; detail: string } => {
+    let last = { ok: false, detail: "no runtime attempted" };
+    for (const rt of tryRuntimes) {
+      last = send(rt);
+      if (last.ok) break;
+    }
+    return last;
+  };
+  const unreg = unregAcross((runtime) => unregisterWatcher(egress, { runtime, iapeerBin }));
   console.log(
     `watcher   : ${
       unreg.ok
@@ -161,7 +178,7 @@ export function cmdUninstall(argv: string[], egress: Egress): number {
     }`,
   );
   for (const id of [LEGACY_SWEEP_TRIGGER_ID, DREAM_TRIGGER_ID]) {
-    const t = unregisterTimer(egress, { id, iapeerBin });
+    const t = unregAcross((runtime) => unregisterTimer(egress, { id, runtime, iapeerBin }));
     console.log(
       `timer     : ${
         t.ok

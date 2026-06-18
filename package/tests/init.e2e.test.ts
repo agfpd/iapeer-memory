@@ -165,6 +165,86 @@ describe("init (local half, sandboxed)", () => {
     expect(fs.existsSync(path.join(peerCwd, ".claude", "skills", "iapeer-memory-status", "SKILL.md"))).toBe(true);
   });
 
+  it("v1.2 runtime contract: --runtime threads into `iapeer create`, and the watcher never assumes claude", () => {
+    // index ABSENT in the registry → init creates it; assert the host runtime is
+    // threaded to create, and the watcher refuses to guess (no claude fallback).
+    const capture = path.join(tmp, "calls.txt");
+    const bin = path.join(tmp, "fake-iapeer");
+    fs.writeFileSync(
+      bin,
+      `#!/usr/bin/env bash\n` +
+        `printf '%s\\n' "$*" >> "${capture}"\n` +
+        `if [ "$1" = "list" ]; then echo "[]"; exit 0; fi\n` +
+        `exit 0\n`,
+    );
+    fs.chmodSync(bin, 0o755);
+    runCli(
+      ["init", "--vault", path.join(tmp, "vault"), "--locale", "en", "--human", "x",
+       "--runtime", "codex", "--skip-deps", "--skip-binary", "--iapeer-bin", bin],
+      { IAPEER_MEMORY_SUPPRESS_IAP_SEND: "0", IAPEER_TEST_SANDBOX: "0" },
+    );
+    const calls = fs.readFileSync(capture, "utf-8");
+    // role peers created WITH the host runtime — not the core's both→claude default
+    expect(calls).toContain("create index --runtime codex");
+    expect(calls).toContain("create scriber --runtime codex");
+    // ONE runtime end-to-end: the flag also drives the watcher identity directly
+    // (no registry round-trip needed), and NEVER the old hardcoded claude-index
+    expect(calls).toContain("send watcher --from codex-index");
+    expect(calls).not.toContain("--from claude-index");
+  });
+
+  it("v1.2 runtime contract: the watcher registers from the index peer's DECLARED runtime (codex), not claude", () => {
+    const peerCwd = path.join(tmp, "peer-index");
+    fs.mkdirSync(peerCwd, { recursive: true });
+    const capture = path.join(tmp, "calls.txt");
+    const bin = path.join(tmp, "fake-iapeer");
+    fs.writeFileSync(
+      bin,
+      `#!/usr/bin/env bash\n` +
+        `printf '%s\\n' "$*" >> "${capture}"\n` +
+        `if [ "$1" = "list" ]; then echo '[{"personality":"index","default_runtime":"codex","cwd":"${peerCwd}","runtimes":[{"runtime":"codex","status":"asleep"}]}]'; exit 0; fi\n` +
+        `exit 0\n`,
+    );
+    fs.chmodSync(bin, 0o755);
+    runCli(
+      ["init", "--vault", path.join(tmp, "vault"), "--locale", "en", "--human", "x",
+       "--skip-deps", "--skip-binary", "--iapeer-bin", bin],
+      { IAPEER_MEMORY_SUPPRESS_IAP_SEND: "0", IAPEER_TEST_SANDBOX: "0" },
+    );
+    const calls = fs.readFileSync(capture, "utf-8");
+    expect(calls).toContain("send watcher --from codex-index");
+    expect(calls).not.toContain("--from claude-index");
+  });
+
+  it("v1.2 runtime contract: no agentic runtime → graceful BM25-only degrade (exit 0 + advisory)", () => {
+    const bin = path.join(tmp, "fake-iapeer");
+    // `create` fails like iapeer on a no-runtime host; `list` is empty.
+    fs.writeFileSync(
+      bin,
+      `#!/usr/bin/env bash\n` +
+        `if [ "$1" = "list" ]; then echo "[]"; exit 0; fi\n` +
+        `if [ "$1" = "create" ]; then echo "no agentic runtime installed (Claude Code or Codex CLI)" >&2; exit 1; fi\n` +
+        `exit 0\n`,
+    );
+    fs.chmodSync(bin, 0o755);
+    const r = runCli(
+      ["init", "--vault", path.join(tmp, "vault"), "--locale", "en", "--human", "x",
+       "--skip-deps", "--skip-binary", "--iapeer-bin", bin],
+      { IAPEER_MEMORY_SUPPRESS_IAP_SEND: "0", IAPEER_TEST_SANDBOX: "0" },
+    );
+    expect(r.exitCode).toBe(0); // graceful: base provisioned, role peers wait on a runtime
+    expect(r.stdout).toContain("no agentic runtime installed");
+    expect(r.stdout).toContain("verify --repair");
+    // Contract with onboard: it re-reads the slot to report state. The base IS
+    // functional on degrade, so the slot MUST be declared (else onboard
+    // mis-reports provider-init-failed). Declared in the functional v1.2 form.
+    const slot = JSON.parse(
+      fs.readFileSync(path.join(tmp, "iapeer-root", "memory-provider.json"), "utf-8"),
+    );
+    expect(slot.provider).toBe("iapeer-memory");
+    expect(slot.provision.args[0]).toBe("provision-peer");
+  });
+
   it("v1.1 → v1.2 migration: the slot migrates with the MANUAL plugin recipe — no `memory-plugin` verb is shelled (ADR-017)", () => {
     const slotPath = path.join(tmp, "iapeer-root", "memory-provider.json");
     fs.mkdirSync(path.dirname(slotPath), { recursive: true });

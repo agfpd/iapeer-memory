@@ -60,6 +60,7 @@ import {
   patchWakePolicyEphemeral,
   registerTimer,
   registerWatcher,
+  resolveRegistrantRuntime,
   unregisterTimer,
   writeDreamGateScript,
   writeLauncherScript,
@@ -276,42 +277,59 @@ export function cmdUpdate(argv: string[], egress: Egress): number {
   // when its role is proactive, UNREGISTERED otherwise.
   {
     const plan = curationPlan(resolveMode(process.env).roles);
-    const w = registerWatcher(egress, {
-      launcherPath: paths.launcherPath,
-      target: plan.eventTarget ?? undefined,
-    });
-
-    // Migration cleanup: drop any stale inbox-sweep timer.
-    const s = unregisterTimer(egress, { id: LEGACY_SWEEP_TRIGGER_ID });
-
-    let d: { ok: boolean; suppressed?: boolean; detail: string };
-    if (plan.dream) {
-      writeDreamGateScript({
-        dreamGateScriptPath: paths.dreamGateScriptPath,
-        binaryPath: paths.binaryPath,
-      });
-      d = registerTimer(egress, {
-        message: dreamTimerMessage({
-          cron: process.env.IAPEER_MEMORY_DREAM_CRON,
-          dreamGateScriptPath: paths.dreamGateScriptPath,
-        }),
-      });
+    // The trigger owner identity's runtime is the index peer's DECLARED runtime
+    // (registry `default_runtime`), never a hardcoded "claude". Null → no index
+    // peer on this host (BM25-only / degraded install) → nothing to reconcile
+    // (non-fatal: triggers land once role peers exist, via verify --repair).
+    const runtime = resolveRegistrantRuntime(egress, { iapeerBin });
+    if (!runtime) {
+      step(
+        "triggers",
+        "skipped — no index peer runtime in the registry (BM25-only / degraded install); " +
+          "triggers reconcile once role peers exist",
+      );
     } else {
-      d = unregisterTimer(egress, { id: DREAM_TRIGGER_ID });
-    }
+      const w = registerWatcher(egress, {
+        launcherPath: paths.launcherPath,
+        target: plan.eventTarget ?? undefined,
+        runtime,
+        iapeerBin,
+      });
 
-    const sandboxed = w.suppressed && s.suppressed && d.suppressed;
-    step(
-      "triggers",
-      sandboxed
-        ? "skipped (test sandbox — sends suppressed)"
-        : w.ok && s.ok && d.ok
-          ? `reconciled: watcher→${plan.eventTarget ?? "memoryd-only (lean)"}, ` +
-            `legacy sweep cleared, ` +
-            `dream ${plan.dream ? `→${DREAM_TARGET}` : "unregistered"}; confirm: verify`
-          : `watcher: ${w.ok ? "ok" : w.detail}; sweep-cleanup: ${s.ok ? "ok" : s.detail}; dream: ${d.ok ? "ok" : d.detail}`,
-      Boolean(sandboxed) || (w.ok && s.ok && d.ok),
-    );
+      // Migration cleanup: drop any stale inbox-sweep timer.
+      const s = unregisterTimer(egress, { id: LEGACY_SWEEP_TRIGGER_ID, runtime, iapeerBin });
+
+      let d: { ok: boolean; suppressed?: boolean; detail: string };
+      if (plan.dream) {
+        writeDreamGateScript({
+          dreamGateScriptPath: paths.dreamGateScriptPath,
+          binaryPath: paths.binaryPath,
+        });
+        d = registerTimer(egress, {
+          message: dreamTimerMessage({
+            cron: process.env.IAPEER_MEMORY_DREAM_CRON,
+            dreamGateScriptPath: paths.dreamGateScriptPath,
+          }),
+          runtime,
+          iapeerBin,
+        });
+      } else {
+        d = unregisterTimer(egress, { id: DREAM_TRIGGER_ID, runtime, iapeerBin });
+      }
+
+      const sandboxed = w.suppressed && s.suppressed && d.suppressed;
+      step(
+        "triggers",
+        sandboxed
+          ? "skipped (test sandbox — sends suppressed)"
+          : w.ok && s.ok && d.ok
+            ? `reconciled: watcher→${plan.eventTarget ?? "memoryd-only (lean)"}, ` +
+              `legacy sweep cleared, ` +
+              `dream ${plan.dream ? `→${DREAM_TARGET}` : "unregistered"}; confirm: verify`
+            : `watcher: ${w.ok ? "ok" : w.detail}; sweep-cleanup: ${s.ok ? "ok" : s.detail}; dream: ${d.ok ? "ok" : d.detail}`,
+        Boolean(sandboxed) || (w.ok && s.ok && d.ok),
+      );
+    }
   }
 
   // 8c. host-wide guide — update an ALREADY-ROLLED-OUT guide only

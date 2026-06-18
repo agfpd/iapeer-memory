@@ -44,6 +44,7 @@ import {
   readWatcherTrigger,
   registerTimer,
   registerWatcher,
+  resolveRegistrantRuntime,
   writeDreamGateScript,
   writeLauncherScript,
   WATCHER_TRIGGER_ID,
@@ -323,6 +324,10 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
       }
     } else {
       const registrantCwd = indexEntry.peerCwd;
+      // The trigger owner identity's runtime is the index peer's DECLARED runtime
+      // (registry `default_runtime`), never a hardcoded "claude" — a codex role
+      // peer registers as codex-index. Null → repair cannot register (reported).
+      const registrationRuntime = resolveRegistrantRuntime(egress, { iapeerBin: opts.iapeerBin });
       // Mode-aware expectation (lean §7): the WATCHER always exists (it launches
       // memoryd) — its target is the §7.1 conditional. The DREAM timer is
       // checked ONLY when its role is proactive; otherwise verify reports a
@@ -347,6 +352,9 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
                 ? `target is ${t.target ?? "?"}, expected ${expectedEventTarget}`
                 : null,
           repairSend: () => {
+            if (!registrationRuntime) {
+              return { ok: false, detail: "index peer runtime unresolved in the registry — cannot register the trigger" };
+            }
             writeLauncherScript({
               launcherPath: paths.launcherPath,
               binaryPath: paths.binaryPath,
@@ -354,6 +362,7 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
             return registerWatcher(egress, {
               launcherPath: paths.launcherPath,
               target: plan.eventTarget ?? undefined,
+              runtime: registrationRuntime,
               iapeerBin: opts.iapeerBin,
             });
           },
@@ -371,6 +380,9 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
                 ? `check is ${(t as { check?: string }).check ?? "?"}, expected ${paths.dreamGateScriptPath}`
                 : null,
           repairSend: () => {
+            if (!registrationRuntime) {
+              return { ok: false, detail: "index peer runtime unresolved in the registry — cannot register the trigger" };
+            }
             writeDreamGateScript({
               dreamGateScriptPath: paths.dreamGateScriptPath,
               binaryPath: paths.binaryPath,
@@ -380,6 +392,7 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
                 cron: process.env.IAPEER_MEMORY_DREAM_CRON,
                 dreamGateScriptPath: paths.dreamGateScriptPath,
               }),
+              runtime: registrationRuntime,
               iapeerBin: opts.iapeerBin,
             });
           },

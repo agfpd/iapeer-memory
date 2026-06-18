@@ -12,6 +12,7 @@ import {
   readWatcherTrigger,
   registerWatcher,
   registrationMessage,
+  resolveRegistrantRuntime,
   unregisterWatcher,
   writeLauncherScript,
   WATCHER_TRIGGER_ID,
@@ -104,40 +105,76 @@ describe("iapeer send identity (e2e §A defect: bare personality is rejected)", 
   it("the refusing egress blocks the DEFAULT binary before any spawn (tests reached the live notifier)", () => {
     // No iapeerBin: the default `iapeer` would hit the LIVE notifier on this
     // host — the refusing handle must stop it before the spawn.
-    const sent = registerWatcher(EG, { launcherPath: "/l.sh" });
+    const sent = registerWatcher(EG, { launcherPath: "/l.sh", runtime: "claude" });
     expect(sent.ok).toBe(false);
     expect(sent.suppressed).toBe(true);
     expect(sent.detail).toContain("suppressed");
   });
 
-  it("fromIdentity builds <runtime>-<personality>, claude by default", () => {
-    expect(fromIdentity("index")).toBe("claude-index");
+  it("fromIdentity builds <runtime>-<personality> — runtime is explicit, never assumed", () => {
+    expect(fromIdentity("index", "claude")).toBe("claude-index");
     expect(fromIdentity("index", "codex")).toBe("codex-index");
   });
 
-  it("register sends --from claude-index while the message target stays the personality", () => {
+  it("register sends --from <declared-runtime>-index while the message target stays the personality", () => {
     const capture = path.join(tmp, "args.txt");
+    // runtime is the registrant's DECLARED runtime (codex here) — not a hardcoded claude
     const sent = registerWatcher(EG, {
       launcherPath: "/l.sh",
+      runtime: "codex",
       iapeerBin: fakeIapeerBin(capture),
     });
     expect(sent.ok).toBe(true);
     const args = fs.readFileSync(capture, "utf-8").trim().split("\n");
-    expect(args.slice(0, 4)).toEqual(["send", "watcher", "--from", "claude-index"]);
+    expect(args.slice(0, 4)).toEqual(["send", "watcher", "--from", "codex-index"]);
     const msg = JSON.parse(args[args.indexOf("--message") + 1]);
     expect(msg.target).toBe("scriber"); // EVENT target (inverted pipeline), NOT the identity
   });
 
-  it("unregister sends from the same identity with the role-scoped cmd", () => {
+  it("unregister sends from the same declared identity with the role-scoped cmd", () => {
     const capture = path.join(tmp, "args.txt");
-    const sent = unregisterWatcher(EG, { iapeerBin: fakeIapeerBin(capture) });
+    const sent = unregisterWatcher(EG, { runtime: "codex", iapeerBin: fakeIapeerBin(capture) });
     expect(sent.ok).toBe(true);
     const args = fs.readFileSync(capture, "utf-8").trim().split("\n");
-    expect(args.slice(0, 4)).toEqual(["send", "watcher", "--from", "claude-index"]);
+    expect(args.slice(0, 4)).toEqual(["send", "watcher", "--from", "codex-index"]);
     expect(JSON.parse(args[args.indexOf("--message") + 1])).toEqual({
       cmd: "unregister",
       id: WATCHER_TRIGGER_ID,
     });
+  });
+});
+
+describe("resolveRegistrantRuntime — declared runtime from the registry (no hardcode)", () => {
+  function fakeListBin(json: string): string {
+    const bin = path.join(tmp, "fake-list");
+    fs.writeFileSync(
+      bin,
+      `#!/usr/bin/env bash\nif [ "$1" = "list" ]; then echo '${json}'; exit 0; fi\nexit 0\n`,
+    );
+    fs.chmodSync(bin, 0o755);
+    return bin;
+  }
+  const EG = liveEgress();
+
+  it("returns the registrant's default_runtime (canonical pick for --from)", () => {
+    const bin = fakeListBin(
+      '[{"personality":"index","default_runtime":"codex","runtimes":[{"runtime":"codex","status":"asleep"}]}]',
+    );
+    expect(resolveRegistrantRuntime(EG, { iapeerBin: bin })).toBe("codex");
+  });
+
+  it("falls back to runtimes[] when default_runtime is absent", () => {
+    const bin = fakeListBin('[{"personality":"index","runtimes":[{"runtime":"claude","status":"live"}]}]');
+    expect(resolveRegistrantRuntime(EG, { iapeerBin: bin })).toBe("claude");
+  });
+
+  it("returns null when the registrant peer is absent — caller degrades, never guesses", () => {
+    const bin = fakeListBin('[{"personality":"smoke","default_runtime":"claude"}]');
+    expect(resolveRegistrantRuntime(EG, { iapeerBin: bin })).toBeNull();
+  });
+
+  it("returns null when the default binary is refused (sandbox) — no spawn, no guess", () => {
+    expect(resolveRegistrantRuntime(EG)).toBeNull();
   });
 });
 
