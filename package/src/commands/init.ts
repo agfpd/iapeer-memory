@@ -53,6 +53,7 @@ import {
   ROLE_NAMES,
 } from "../templates/index.js";
 import { packageVersion } from "../version.js";
+import { paintStatus, ui } from "../ui.js";
 import {
   DREAM_TARGET,
   dreamTimerMessage,
@@ -256,7 +257,9 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
   let failures = 0;
   const step = (name: string, detail: string, ok = true): void => {
     if (!ok) failures++;
-    console.log(`${ok ? "ok  " : "FAIL"}  ${name.padEnd(10)}  ${detail}`);
+    const token = paintStatus(ok ? "ok" : "fail", ok ? "ok  " : "FAIL");
+    // ok detail is confirmatory → dim; fail detail is the reason → keep readable.
+    console.log(`${token}  ${name.padEnd(10)}  ${ok ? ui.dim(detail) : detail}`);
   };
 
   // 1. dependencies
@@ -651,8 +654,8 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
 
   console.log(
     failures
-      ? `\ninit finished with ${failures} problem(s) — re-run init (idempotent) or iapeer-memory verify --repair`
-      : "\ninit complete — check the chain: iapeer-memory status",
+      ? `\n${ui.bold(ui.yellow(`init finished with ${failures} problem(s)`))} — re-run init (idempotent) or iapeer-memory verify --repair`
+      : `\n${ui.bold(ui.green("init complete"))} — check the chain: iapeer-memory status`,
   );
   return failures ? 1 : 0;
 }

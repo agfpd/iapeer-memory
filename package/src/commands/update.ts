@@ -65,6 +65,7 @@ import {
   writeDreamGateScript,
   writeLauncherScript,
 } from "../watcher.js";
+import { paintStatus, ui } from "../ui.js";
 import { stopMemorydByPidFile } from "./uninstall.js";
 
 /** A non-forcing operator hint, emitted when this update rewrote the host-wide
@@ -109,7 +110,8 @@ export function cmdUpdate(argv: string[], egress: Egress): number {
   let failures = 0;
   const step = (name: string, detail: string, ok = true): void => {
     if (!ok) failures++;
-    console.log(`${ok ? "ok  " : "FAIL"}  ${name.padEnd(10)}  ${detail}`);
+    const token = paintStatus(ok ? "ok" : "fail", ok ? "ok  " : "FAIL");
+    console.log(`${token}  ${name.padEnd(10)}  ${ok ? ui.dim(detail) : detail}`);
   };
 
   console.log(`iapeer-memory update → v${version}`);

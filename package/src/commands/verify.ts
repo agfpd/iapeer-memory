@@ -49,6 +49,7 @@ import {
   writeLauncherScript,
   WATCHER_TRIGGER_ID,
 } from "../watcher.js";
+import { paintStatus, ui } from "../ui.js";
 
 /** Heartbeat default is 30s (core memoryd) — 4 missed beats = stale. */
 export const DEFAULT_HEARTBEAT_STALE_MS = 120_000;
@@ -534,10 +535,11 @@ export function cmdVerify(argv: string[], egress: Egress): number {
   const width = Math.max(...results.map((r) => r.name.length));
   for (const r of results) {
     const mark =
-      r.status === "ok" ? "ok      " :
-      r.status === "repaired" ? "repaired" :
-      r.status === "skip" ? "skip    " : "FAIL    ";
-    console.log(`${mark} ${r.name.padEnd(width)}  ${r.detail}`);
+      r.status === "ok" ? paintStatus("ok", "ok      ") :
+      r.status === "repaired" ? paintStatus("ok", "repaired") :
+      r.status === "skip" ? paintStatus("skip", "skip    ") : paintStatus("fail", "FAIL    ");
+    const detail = r.status === "fail" ? r.detail : ui.dim(r.detail);
+    console.log(`${mark} ${r.name.padEnd(width)}  ${detail}`);
   }
   return results.some((r) => r.status === "fail") ? 1 : 0;
 }

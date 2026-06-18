@@ -34,6 +34,7 @@ import {
 } from "../surfaces/claude.js";
 import { provisionCodexPeer, unprovisionCodexPeer } from "../surfaces/codex.js";
 import { withProvisionLock } from "../surfaces/lock.js";
+import { paintStatus, ui } from "../ui.js";
 
 /** The memoryd MCP port FACT of this host (config.env is already loaded into
  *  the process env by the CLI boot) — baked literally into both MCP surface
@@ -117,9 +118,11 @@ function parseFlags(
 function report(verb: string, flags: Flags, outcomes: SurfaceOutcome[]): number {
   let failed = false;
   for (const o of outcomes) {
-    if (o.action === "failed") failed = true;
+    const ok = o.action !== "failed";
+    if (!ok) failed = true;
+    const token = paintStatus(ok ? "ok" : "fail", ok ? "ok  " : "FAIL");
     console.log(
-      `${o.action === "failed" ? "FAIL" : "ok  "}  ${o.surface.padEnd(7)} ${o.action}${o.detail ? ` — ${o.detail}` : ""} (${o.path})`,
+      `${token}  ${o.surface.padEnd(7)} ${o.action}${o.detail ? ` — ${o.detail}` : ""} ${ui.dim(`(${o.path})`)}`,
     );
   }
   console.log(

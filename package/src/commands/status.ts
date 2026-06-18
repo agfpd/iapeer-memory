@@ -18,6 +18,7 @@ import type { Egress } from "../egress.js";
 import { memoryPaths } from "../paths.js";
 import { readSlot } from "../slot.js";
 import { packageVersion } from "../version.js";
+import { paintStatus, ui } from "../ui.js";
 import { runVerify } from "./verify.js";
 
 /**
@@ -122,8 +123,13 @@ export async function cmdStatus(argv: string[], egress: Egress): Promise<number>
   const width = Math.max(...results.map((r) => r.name.length), 12);
   for (const r of results) {
     const mark =
-      r.status === "ok" ? "ok  " : r.status === "skip" ? "skip" : "FAIL";
-    console.log(`${mark}  ${r.name.padEnd(width)}  ${r.detail}`);
+      r.status === "ok"
+        ? paintStatus("ok", "ok  ")
+        : r.status === "skip"
+          ? paintStatus("skip", "skip")
+          : paintStatus("fail", "FAIL");
+    const detail = r.status === "ok" || r.status === "skip" ? ui.dim(r.detail) : r.detail;
+    console.log(`${mark}  ${r.name.padEnd(width)}  ${detail}`);
   }
 
   const slot = readSlot(paths.slotPath);
