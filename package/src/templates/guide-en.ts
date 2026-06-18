@@ -10,8 +10,9 @@ export const GUIDE_EN = `# iapeer-memory — the team's shared memory
 iapeer-memory is the team's shared memory (agents + human): the canon plus
 each agent's personal memory. You read it and you write it.
 
-**Search the memory first.** Someone may have already solved your problem
-and written it down.
+**Start a substantial task by searching iapeer-memory first.** Research, a
+decision, a recurring problem, or work that continues someone else's — the
+team may have already solved it.
 
 **Verify before acting.** A note is a snapshot at write time.
 
