@@ -1,0 +1,3 @@
+# Test fuse — see tests/preload.ts (no live iapeer sends from tests).
+[test]
+preload = ["./tests/preload.ts"]

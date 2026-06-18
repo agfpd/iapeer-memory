@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# npx @agfpd/iapeer-memory bootstrap.
+#
+# Runs the iapeer-memory CLI from the package SOURCE via bun — the package is
+# TypeScript-only, no precompiled JS is shipped (ADR-003; same pattern as the
+# @agfpd/iapeer foundation bin). All args pass straight through to the CLI;
+# a BARE invocation prints usage — provisioning is always explicit:
+# `npx @agfpd/iapeer-memory init`.
+set -euo pipefail
+
+# Resolve the real path of this script BEFORE computing the package root.
+# npm/npx expose the bin as a SYMLINK at node_modules/.bin/iapeer-memory →
+# ../@agfpd/iapeer-memory/bin/iapeer-memory; without resolving it, dirname/..
+# lands on node_modules (not the package dir) and src/cli.ts is not found.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+PKG_ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
+CLI="$PKG_ROOT/src/cli.ts"
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "iapeer-memory: 'bun' is required on PATH to run the CLI — install it from https://bun.sh" >&2
+  exit 1
+fi
+
+exec bun "$CLI" "$@"

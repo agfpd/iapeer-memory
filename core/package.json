@@ -1,0 +1,32 @@
+{
+  "name": "@agfpd/iapeer-memory-core",
+  "version": "0.3.12",
+  "description": "iapeer-memory core — host-neutral TypeScript memory primitive: vault schema/taxonomy config, search engine, memoryd, context renderer, role contracts. Consumed by the @agfpd/iapeer-memory facade; version kept in lockstep by its release flow.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "files": [
+    "src",
+    "tsconfig.json"
+  ],
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "test -z \"$(git status --porcelain)\" || (echo 'release: working tree is dirty — commit or stash before release' >&2 && exit 1)"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "gray-matter": "^4.0.3",
+    "sqlite-vec": "^0.1.9",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "@agfpd/iapeer-memory",
+  "version": "0.3.12",
+  "description": "iapeer-memory — peer memory for the iapeer ecosystem: vault, memoryd (index/search/MCP over HTTP), context fragments, role doctrines. The package IS the system; session surfaces are direct per-peer files merged into each peer's cwd. See docs/README.md.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "iapeer-memory": "bin/iapeer-memory"
+  },
+  "files": [
+    "src",
+    "bin",
+    "tsconfig.json"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "preversion": "bun run test && bun run typecheck",
+    "version": "bun src/sync-versions.ts && git add -A ..",
+    "release": "npm version patch --workspaces-update=false && npm run release:finish",
+    "release:minor": "npm version minor --workspaces-update=false && npm run release:finish",
+    "release:major": "npm version major --workspaces-update=false && npm run release:finish",
+    "release:finish": "V=$(bun -e 'console.log(JSON.parse(require(\"fs\").readFileSync(\"package.json\",\"utf-8\")).version)') && git -C .. commit -m \"$V\" && git -C .. tag -a \"v$V\" -m \"$V\" && (cd ../core && npm publish) && npm publish && git push --follow-tags",
+    "prepublishOnly": "test -z \"$(git status --porcelain)\" || (echo 'release: working tree is dirty — commit or stash before release' >&2 && exit 1)"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@agfpd/iapeer-memory-core": "0.3.12"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.7.0"
+  }
+}

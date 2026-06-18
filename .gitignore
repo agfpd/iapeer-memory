@@ -1,0 +1,19 @@
+node_modules/
+.DS_Store
+*.log
+dist/
+.iapeer/
+*.db
+
+# host-local peer setup (model, enabled plugins) — not part of the public product
+.claude/settings.json
+.claude/settings.local.json
+
+# host-local peer wiring (this repo is ALSO the iapeer-memory peer cwd) — not the product
+/.mcp.json
+.claude/skills/iapeer-memory-*/
+.codex/
+
+# internal mechanics docs & specs — kept local for development, excluded from the public release
+docs/internals/
+docs/ТЗ-*.md

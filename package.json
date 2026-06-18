@@ -1,0 +1,14 @@
+{
+  "name": "iapeer-memory-monorepo",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "iapeer-memory — peer memory primitive for the iapeer ecosystem. Monorepo: core (host-neutral TS engine — taxonomy, search, memoryd, renderers) + package (npm facade — the package IS the system; session surfaces are direct per-peer files). See docs/README.md.",
+  "workspaces": [
+    "core",
+    "package"
+  ],
+  "scripts": {
+    "test": "bun test core package",
+    "typecheck": "cd core && bun run typecheck && cd ../package && bun run typecheck"
+  }
+}
