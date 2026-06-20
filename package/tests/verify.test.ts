@@ -327,26 +327,6 @@ describe("runVerify", () => {
     expect(r.status).toBe("skip");
   });
 
-  it("slot: a LEGACY v1.1 declaration is a fail pointing at update — verify NEVER migrates it (plugin-off order)", () => {
-    fs.mkdirSync(path.dirname(paths.slotPath), { recursive: true });
-    fs.writeFileSync(
-      paths.slotPath,
-      JSON.stringify({
-        provider: "iapeer-memory", package: "@agfpd/iapeer-memory", version: "1.0.0",
-        registeredAt: "t",
-        plugin: { name: "iapeer-memory", marketplace: "agfpd", marketplaceRef: "agfpd/agfpd-marketplace" },
-      }),
-    );
-    const results = runVerify(EG, { paths, version: "1.0.0", repair: true });
-    const slot = byName(results, "memory-slot");
-    expect(slot.status).toBe("fail");
-    expect(slot.detail).toContain("update");
-    // the file is UNTOUCHED even under --repair…
-    expect(JSON.parse(fs.readFileSync(paths.slotPath, "utf-8")).plugin).toBeDefined();
-    // …and the direct-surfaces check stands down (the plugin is still the live channel)
-    expect(byName(results, "peer-surfaces").status).toBe("skip");
-  });
-
   it("peer-surfaces (ADR-009 v1.2): drifted peer → fail per peer-runtime; --repair re-provisions; then ok", () => {
     // Fixtures BY HAND — never via a repair chain: a repair run with no
     // fleet map queried the LIVE registry and swept the LIVE fleet's cwds;

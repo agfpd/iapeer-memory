@@ -527,16 +527,12 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
     }
   }
 
-  // 8. slot + surfaces + v1.1 migration — ORDER MATTERS (ADR-009 v1.2):
+  // 8. slot + surfaces (ADR-009 v1.2):
   //   8a. a FOREIGN slot refuses the whole block (never lay surfaces over
   //       another provider's host);
-  //   8b. direct surfaces sweep across the existing fleet (the new channel
-  //       must be in place BEFORE the old one is stripped);
-  //   8c. legacy plugin off — while the v1.1 slot is STILL on disk (the
-  //       core verb derives the plugin identity from the live declaration;
-  //       overwriting first would leave it nothing to derive from);
-  //   8d. slot declaration re-written in the v1.2 form (provision command,
-  //       no plugin block). Newborns are then the core birth-hook's duty.
+  //   8b. direct surfaces sweep across the existing fleet;
+  //   8c. slot declaration in the v1.2 provision form. Newborns are then the
+  //       core birth-hook's duty.
   const existingSlot = readSlot(paths.slotPath);
   const slotForeign = existingSlot !== null && existingSlot.provider !== SLOT_PROVIDER;
   if (slotForeign) {
@@ -548,7 +544,6 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
     let surfacesOk = false;
     if (flags.skipEcosystem) {
       step("surfaces", "skipped (--skip-ecosystem)");
-      surfacesOk = true; // sandboxed run — don't block the slot/migration steps
     } else {
       const fleet = readFleetMap(paths.fleetMapPath) ?? [];
       const locked = withProvisionLock({
@@ -579,47 +574,18 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
       }
     }
 
-    // 8c. v1.1 → v1.2 migration: the plugin channel is REMOVED (ADR-017) —
-    // the package no longer shells the core verb; a v1.1 host gets the
-    // manual recipe and the slot migrates ONLY after the direct surfaces
-    // landed cleanly (never strand a host with neither channel).
-    let migrationBlocked = false;
-    if (!flags.skipEcosystem && existingSlot?.plugin) {
-      if (!surfacesOk) {
-        migrationBlocked = true;
-        step(
-          "plugin-off",
-          "POSTPONED: direct surfaces did not land cleanly — v1.1 slot kept (re-run init after fixing)",
-          false,
-        );
-      } else {
-        step(
-          "plugin-off",
-          "legacy v1.1 session plugin is NOT auto-removed (channel removed, ADR-017) — manual, per claude peer: " +
-            "`claude plugin uninstall iapeer-memory@agfpd --scope project` from its cwd; codex (host-global): " +
-            "`codex plugin remove iapeer-memory@agfpd`. Until then it stamps in parallel (idempotent).",
-        );
-      }
-    }
-
-    // 8d. slot declaration (atomic; provider-owned). Kept in the v1.1 form
-    // while the migration is blocked — the legacy plugin channel stays
-    // derivable until the new channel lands.
-    if (migrationBlocked) {
-      step("slot", "kept v1.1 declaration (migration postponed — see plugin-off)", false);
-    } else {
-      const slot = writeSlot({
-        slotPath: paths.slotPath,
-        version,
-        binaryPath: paths.binaryPath,
-        heartbeat: paths.heartbeatPath,
-      });
-      step(
-        "slot",
-        `${paths.slotPath} (${slot.action}, v${version}, provision-command declared)`,
-        slot.action !== "refused-foreign",
-      );
-    }
+    // 8c. slot declaration (atomic; provider-owned; v1.2 provision form).
+    const slot = writeSlot({
+      slotPath: paths.slotPath,
+      version,
+      binaryPath: paths.binaryPath,
+      heartbeat: paths.heartbeatPath,
+    });
+    step(
+      "slot",
+      `${paths.slotPath} (${slot.action}, v${version}, provision-command declared)`,
+      slot.action !== "refused-foreign",
+    );
   }
 
   // 9. native-memory sweep — the core's lever (one home of runtime forms);

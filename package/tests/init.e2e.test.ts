@@ -245,46 +245,6 @@ describe("init (local half, sandboxed)", () => {
     expect(slot.provision.args[0]).toBe("provision-peer");
   });
 
-  it("v1.1 → v1.2 migration: the slot migrates with the MANUAL plugin recipe — no `memory-plugin` verb is shelled (ADR-017)", () => {
-    const slotPath = path.join(tmp, "iapeer-root", "memory-provider.json");
-    fs.mkdirSync(path.dirname(slotPath), { recursive: true });
-    fs.writeFileSync(
-      slotPath,
-      JSON.stringify({
-        provider: "iapeer-memory",
-        package: "@agfpd/iapeer-memory",
-        version: "0.1.13",
-        registeredAt: "2026-06-10T00:00:00.000Z",
-        plugin: { name: "iapeer-memory", marketplace: "agfpd", marketplaceRef: "agfpd/agfpd-marketplace" },
-      }),
-    );
-    const capture = path.join(tmp, "calls.txt");
-    const bin = path.join(tmp, "fake-iapeer");
-    fs.writeFileSync(
-      bin,
-      `#!/usr/bin/env bash\n` +
-        `if [ "$1" = "list" ]; then echo "[]"; exit 0; fi\n` +
-        `FORM=absent; if [ -f "${slotPath}" ]; then if grep -q '"plugin"' "${slotPath}"; then FORM=v11; else FORM=v12; fi; fi\n` +
-        `printf '%s|slot=%s\\n' "$*" "$FORM" >> "${capture}"\n`,
-    );
-    fs.chmodSync(bin, 0o755);
-
-    const r = runCli(
-      ["init", "--vault", path.join(tmp, "vault"), "--locale", "en", "--human", "x",
-       "--skip-deps", "--skip-binary", "--iapeer-bin", bin],
-      { IAPEER_MEMORY_SUPPRESS_IAP_SEND: "0", IAPEER_TEST_SANDBOX: "0" },
-    );
-    const calls = fs.readFileSync(capture, "utf-8").trim();
-    // the verb is GONE (channel removed) — only the manual recipe is printed…
-    expect(calls).not.toContain("memory-plugin");
-    expect(r.stdout).toContain("NOT auto-removed (channel removed, ADR-017)");
-    expect(r.stdout).toContain("claude plugin uninstall iapeer-memory@agfpd");
-    // …and the slot still migrates to the v1.2 form
-    const slot = JSON.parse(fs.readFileSync(slotPath, "utf-8"));
-    expect(slot.plugin).toBeUndefined();
-    expect(slot.provision.args[0]).toBe("provision-peer");
-  });
-
   it("after init, verify on the same env goes green for the local checks", () => {
     const vault = path.join(tmp, "vault");
     runCli(["init", "--vault", vault, "--locale", "en", ...LOCAL_FLAGS]);

@@ -39,11 +39,6 @@ import { IAPEER_BIN, type Egress } from "./egress.js";
 import { guardedWriteFileSync } from "@agfpd/iapeer-memory-core";
 
 export const WATCHER_TRIGGER_ID = "iapeer-memory-memoryd";
-/** LEGACY — the inbox-sweep timer id. The inbox pipeline is gone; this id is
- *  kept ONLY so update/verify can UNREGISTER a stale sweep trigger left on a
- *  host provisioned before the direct-to-canon migration (idempotent: the
- *  notifier treats not-found as a soft no-op). Never re-registered. */
-export const LEGACY_SWEEP_TRIGGER_ID = "iapeer-memory-inbox-sweep";
 /** Weekly DreamWeaver tick. A notifier TIMER straight to DreamWeaver, GATED
  *  by a check-script that runs the deterministic pre-filter (`dream-collect
  *  --gate`): a dead week never wakes anyone (Фаза «детерминированный

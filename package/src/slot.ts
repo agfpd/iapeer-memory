@@ -19,14 +19,15 @@
  *   {personality} {occasion} substitute PER-ARGUMENT (argv spawn, no shell,
  *   120s timeout, best-effort + loud warn). Precedence at the core:
  *   provision > plugin with NO runtime fallback;
- * - `plugin` (v1.1, deprecated by v1.2): we no longer WRITE it — holding
- *   both blocks would make an old core re-install the plugin we swept.
- *   An old core reads our v1.2 slot as «provider without a
- *   plugin» and honestly skips the birth install; the newborn is picked up
- *   by the verify --repair sweep. RELEASE ORDER closes even that window on
- *   this host: the core ships its v1.2 parser FIRST, our release follows.
- *   The type keeps the field so uninstall/update can MIGRATE old slots
- *   (plugin off --all while the block is still readable).
+ * - `plugin` (v1.1, deprecated by v1.2): we no longer WRITE it. An old core
+ *   reads our v1.2 slot as «provider without a plugin» and honestly skips the
+ *   birth install; the newborn is picked up by the verify --repair sweep. The
+ *   type keeps the field as a READ-only mirror of the foundation's slot
+ *   contract (iapeer's MemoryProviderPlugin) and to detect a stray v1.1 slot in
+ *   the writeSlot idempotency guard. The command-level v1.1→v1.2 migration
+ *   apparatus has been REMOVED (ADR-017) — migrating an old host is a
+ *   documented manual step (uninstall + re-init); see
+ *   docs/10-iapeer-integration.md.
  */
 
 import fs from "node:fs";
@@ -172,7 +173,9 @@ export function removeSlot(slotPath: string): SlotRemoveResult {
   return "removed";
 }
 
-// applyMemoryPlugin (the core verb `iapeer memory-plugin <on|off> --all`)
-// was REMOVED with the plugin channel (ADR-017): v1.1 hosts get a manual
-// recipe in init/update/uninstall instead of an auto-sweep. The `plugin`
-// field on the slot type stays — it is the v1.1 READ marker.
+// applyMemoryPlugin (the core verb `iapeer memory-plugin <on|off> --all`) was
+// REMOVED with the plugin channel (ADR-017). The command-level v1.1 migration
+// apparatus has since been removed too — migrating an old host is a manual step
+// (uninstall + re-init), documented in docs/10-iapeer-integration.md. The
+// `plugin` field on the slot type stays as a foundation-contract mirror /
+// writeSlot v1.1-detection marker (pending an iapeer slot-contract sync).

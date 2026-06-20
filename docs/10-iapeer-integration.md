@@ -10,6 +10,8 @@ Memory in iapeer is a provider slot: a single per-host role that one package cla
 
 Through those commands the core calls the provider at a peer's life events: at peer birth (`birth`) — to attach the memory surfaces, at removal (`remove`) — to strip them. That's how a new agent gets access to memory automatically, with no separate setup. At the same time, attaching memory turns off the runtime's native memory (`iapeer native-memory off`) so there's no second, unmanaged store; it isn't turned back on by itself when the provider is removed — that's done by hand.
 
+> **Migrating a pre-v1.2 host (manual).** Early builds delivered session surfaces through a Claude Code *marketplace plugin*, recorded as a `plugin` block in the slot. That channel was removed (ADR-017) in favour of direct per-peer surfaces, and the automatic migration apparatus has been retired — `init`/`update`/`verify`/`uninstall` no longer detect or convert a `plugin` slot. A host still carrying one migrates by hand: run `iapeer-memory uninstall` (drops the old declaration), then `iapeer-memory init` (writes the v1.2 slot and lays the direct surfaces). The legacy session plugin, if still installed, is removed once per peer — `claude plugin uninstall iapeer-memory@agfpd --scope project` from the peer's cwd, or host-global `codex plugin remove iapeer-memory@agfpd`.
+
 ## Integration points
 
 iapeer-memory uses the core's ready-made mechanisms wherever they exist:

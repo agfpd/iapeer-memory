@@ -57,7 +57,6 @@ import { packageVersion } from "../version.js";
 import {
   DREAM_TARGET,
   DREAM_TRIGGER_ID,
-  LEGACY_SWEEP_TRIGGER_ID,
   dreamTimerMessage,
   patchWakePolicyEphemeral,
   registerTimer,
@@ -230,35 +229,9 @@ export function cmdUpdate(argv: string[], egress: Egress): number {
     }
   }
 
-  // 6. v1.1 → v1.2 migration (one-shot per host): the plugin channel is
-  // REMOVED (ADR-017) — no core verb is shelled; a v1.1 host gets the
-  // manual recipe and the slot migrates ONLY after the direct surfaces
-  // landed cleanly (never strand a host with neither channel).
-  let migrationBlocked = false;
-  if (!slotForeign && existingSlot?.plugin) {
-    if (!surfacesOk) {
-      migrationBlocked = true;
-      step(
-        "plugin-off",
-        "POSTPONED: direct surfaces did not land cleanly — v1.1 slot kept (fix and re-run update)",
-        false,
-      );
-    } else {
-      step(
-        "plugin-off",
-        "legacy v1.1 session plugin is NOT auto-removed (channel removed, ADR-017) — manual, per claude peer: " +
-          "`claude plugin uninstall iapeer-memory@agfpd --scope project` from its cwd; codex (host-global): " +
-          "`codex plugin remove iapeer-memory@agfpd`. Until then it stamps in parallel (idempotent).",
-      );
-    }
-  }
-
-  // 7. slot version + v1.2 form (contract obligation). Kept v1.1 while the
-  // migration is blocked — the legacy channel stays derivable.
+  // 6. slot version + v1.2 form (contract obligation).
   if (slotForeign) {
     step("slot", `slot held by foreign provider "${existingSlot?.provider}" — not ours to update`, false);
-  } else if (migrationBlocked) {
-    step("slot", "kept v1.1 declaration (migration postponed — see plugin-off)", false);
   } else {
     const slot = writeSlot({
       slotPath: paths.slotPath,
@@ -300,9 +273,6 @@ export function cmdUpdate(argv: string[], egress: Egress): number {
         iapeerBin,
       });
 
-      // Migration cleanup: drop any stale inbox-sweep timer.
-      const s = unregisterTimer(egress, { id: LEGACY_SWEEP_TRIGGER_ID, runtime, iapeerBin });
-
       let d: { ok: boolean; suppressed?: boolean; detail: string };
       if (plan.dream) {
         writeDreamGateScript({
@@ -321,17 +291,16 @@ export function cmdUpdate(argv: string[], egress: Egress): number {
         d = unregisterTimer(egress, { id: DREAM_TRIGGER_ID, runtime, iapeerBin });
       }
 
-      const sandboxed = w.suppressed && s.suppressed && d.suppressed;
+      const sandboxed = w.suppressed && d.suppressed;
       step(
         "triggers",
         sandboxed
           ? "skipped (test sandbox — sends suppressed)"
-          : w.ok && s.ok && d.ok
+          : w.ok && d.ok
             ? `reconciled: watcher→${plan.eventTarget ?? "memoryd-only (lean)"}, ` +
-              `legacy sweep cleared, ` +
               `dream ${plan.dream ? `→${DREAM_TARGET}` : "unregistered"}; confirm: verify`
-            : `watcher: ${w.ok ? "ok" : w.detail}; sweep-cleanup: ${s.ok ? "ok" : s.detail}; dream: ${d.ok ? "ok" : d.detail}`,
-        Boolean(sandboxed) || (w.ok && s.ok && d.ok),
+            : `watcher: ${w.ok ? "ok" : w.detail}; dream: ${d.ok ? "ok" : d.detail}`,
+        Boolean(sandboxed) || (w.ok && d.ok),
       );
     }
   }

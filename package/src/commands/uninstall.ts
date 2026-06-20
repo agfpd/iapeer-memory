@@ -28,7 +28,6 @@ import { sweepUnprovision } from "../surfaces/sweep.js";
 import { guardedUnlinkSync } from "@agfpd/iapeer-memory-core";
 import {
   DREAM_TRIGGER_ID,
-  LEGACY_SWEEP_TRIGGER_ID,
   resolveRegistrantRuntime,
   unregisterTimer,
   unregisterWatcher,
@@ -141,20 +140,6 @@ export function cmdUninstall(argv: string[], egress: Egress): number {
         }
       }
     }
-
-    // Legacy v1.1 path: the slot still carries a plugin block. The plugin
-    // channel is REMOVED (ADR-017) — no core verb is shelled; the manual
-    // recipe works without the slot.
-    if (declared.plugin) {
-      row(
-        "plugin",
-        ui.gray(
-          "legacy v1.1 session plugin is NOT auto-removed (channel removed, ADR-017) — manual: " +
-            "per claude peer `claude plugin uninstall iapeer-memory@agfpd --scope project` from its cwd; " +
-            "codex (host-global): `codex plugin remove iapeer-memory@agfpd`",
-        ),
-      );
-    }
   }
 
   const slot = removeSlot(paths.slotPath);
@@ -190,7 +175,7 @@ export function cmdUninstall(argv: string[], egress: Egress): number {
       ? ui.green(`unregister sent for ${WATCHER_TRIGGER_ID}`)
       : ui.gray(`unregister not sent (${unreg.detail}) — remove the trigger manually via the watcher peer`),
   );
-  for (const id of [LEGACY_SWEEP_TRIGGER_ID, DREAM_TRIGGER_ID]) {
+  for (const id of [DREAM_TRIGGER_ID]) {
     const t = unregAcross((runtime) => unregisterTimer(egress, { id, runtime, iapeerBin }));
     row(
       "timer",

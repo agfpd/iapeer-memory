@@ -422,37 +422,6 @@ describe("uninstall and status commands", () => {
     expect(fs.existsSync(slotPath)).toBe(true);
   });
 
-  it("uninstall on a LEGACY v1.1 slot prints the MANUAL plugin recipe (channel removed, ADR-017) — no core verb is shelled", () => {
-    const slotPath = path.join(tmp, "iapeer-root", "memory-provider.json");
-    fs.mkdirSync(path.dirname(slotPath), { recursive: true });
-    fs.writeFileSync(
-      slotPath,
-      JSON.stringify({
-        provider: "iapeer-memory", package: "@agfpd/iapeer-memory", version: "0.1.0", registeredAt: "t",
-        plugin: { name: "iapeer-memory", marketplace: "agfpd", marketplaceRef: "agfpd/agfpd-marketplace" },
-      }),
-    );
-    const capture = path.join(tmp, "calls.txt");
-    const bin = path.join(tmp, "fake-iapeer");
-    fs.writeFileSync(
-      bin,
-      `#!/usr/bin/env bash\n` +
-        `printf '%s\\n' "$*" >> "${capture}"\n`,
-    );
-    fs.chmodSync(bin, 0o755);
-
-    const r = runCli(["uninstall", "--iapeer-bin", bin], {
-      IAPEER_MEMORY_SUPPRESS_IAP_SEND: "0",
-      IAPEER_TEST_SANDBOX: "0", // every call goes to the FAKE bin — nothing live
-    });
-    expect(r.exitCode).toBe(0);
-    const calls = fs.existsSync(capture) ? fs.readFileSync(capture, "utf-8") : "";
-    expect(calls).not.toContain("memory-plugin"); // the verb is GONE, not suppressed
-    expect(r.stdout).toContain("NOT auto-removed (channel removed, ADR-017)");
-    expect(r.stdout).toContain("claude plugin uninstall iapeer-memory@agfpd");
-    expect(fs.existsSync(slotPath)).toBe(false); // the declaration still falls
-  });
-
   it("status aggregates verify + slot + MCP probe and stays read-only", () => {
     const vault = makeVault();
     const r = runCli(["status"], {

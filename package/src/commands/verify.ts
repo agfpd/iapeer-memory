@@ -102,11 +102,6 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
 
   // 1b. memory-provider slot (iapeer memory-slot contract): a provisioned
   // host must declare the slot; a FOREIGN slot is never repaired over.
-  // A v1.1 slot (plugin block) is NEVER migrated here — the migration is
-  // update's job (plugin off --all must run while the old declaration is
-  // readable; a SessionStart-kicked repair racing ahead of update would
-  // strand the legacy plugin on the whole fleet).
-  let slotIsLegacyV11 = false;
   if (!configOk) {
     results.push({
       name: "memory-slot",
@@ -118,7 +113,6 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
     const expectedBlocks = slotProvisionBlocks(paths.binaryPath);
     const formOk =
       slot !== null &&
-      slot.plugin === undefined &&
       JSON.stringify(slot.provision) === JSON.stringify(expectedBlocks.provision) &&
       JSON.stringify(slot.unprovision) === JSON.stringify(expectedBlocks.unprovision);
     if (slot && slot.provider !== SLOT_PROVIDER) {
@@ -126,14 +120,6 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
         name: "memory-slot",
         status: "fail",
         detail: `slot held by foreign provider "${slot.provider}" — refusing to touch (uninstall it first)`,
-      });
-    } else if (slot?.plugin) {
-      slotIsLegacyV11 = true;
-      results.push({
-        name: "memory-slot",
-        status: "fail",
-        detail:
-          "slot is the legacy v1.1 form (plugin block) — migrate via `iapeer-memory update` (verify never migrates: the plugin-off order is update's duty)",
       });
     } else if (slot && slot.version === version && formOk) {
       results.push({
@@ -204,17 +190,9 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
 
   // 1d. direct per-peer session surfaces (ADR-009 v1.2) across the fleet
   // map — the self-healing loop for newborns on hosts where the core's
-  // birth-hook lagged AND the drift-repair duty (требование №2). Skipped on
-  // a legacy v1.1 host: the plugin is still the live channel there, direct
-  // surfaces land via update's migration.
+  // birth-hook lagged AND the drift-repair duty (требование №2).
   if (!configOk) {
     results.push({ name: "peer-surfaces", status: "skip", detail: "not provisioned (config check failed)" });
-  } else if (slotIsLegacyV11) {
-    results.push({
-      name: "peer-surfaces",
-      status: "skip",
-      detail: "legacy v1.1 host (plugin channel) — direct surfaces land via `iapeer-memory update`",
-    });
   } else {
     const fleet = readFleetMap(paths.fleetMapPath);
     if (!fleet) {
