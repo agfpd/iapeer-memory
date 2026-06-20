@@ -73,7 +73,6 @@ export type DecideSilentInput = {
   /** Baseline record (the PREVIOUS pass). */
   prev: StampRecord;
   curr: StampRecord;
-  zone: SilentZone;
   nowMs: number;
   freshEditWindowS?: number;
 };

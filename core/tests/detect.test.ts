@@ -19,7 +19,6 @@ import {
   formatStamp,
   parseUpdated,
   upsertField,
-  setIfMissing,
   getZone,
   decideUpdate,
   DEFAULT_FRESH_EDIT_WINDOW_S,
@@ -45,12 +44,10 @@ const LEGACY_FRESH_UPD = "2026-05-15 12:30"; // 20s back, minute precision
 function decide(over: Partial<DecideUpdateInput>) {
   return decideUpdate({
     content: "",
-    zone: "permanent",
     human: HUMAN,
     nowMs: NOW,
     birthtimeMs: Date.UTC(2026, 0, 2, 0, 0, 0),
     mtimeMs: Date.UTC(2026, 2, 3, 0, 0, 0),
-    basename: "Заметка.md",
     path: "/vault/01_Знания/Заметка.md",
     vault: "/vault",
     lastHash: null,
@@ -107,11 +104,6 @@ describe("human-edit-detect: pure helpers", () => {
     expect(upsertField("", "x", "y")).toBe("\nx: y\n");
   });
 
-  it("setIfMissing keeps existing, adds when absent", () => {
-    expect(setIfMissing("title: keep", "title", "new")).toBe("title: keep");
-    expect(setIfMissing("a: 1", "title", "T")).toBe("a: 1\ntitle: T\n");
-  });
-
   it("getZone maps folders correctly (taxonomy-driven, both locales)", () => {
     for (const T of [TAXONOMY_RU, TAXONOMY_EN]) {
       const v = "/vault";
@@ -135,7 +127,7 @@ describe("human-edit-detect: skip paths (anti-loop, load-bearing)", () => {
   it("permanent without frontmatter → BUILT, not skipped (lean §2.2)", () => {
     // The guard completes a human's bare-body canon note instead of skipping
     // it — canon frontmatter is the guard's job in lean, not the Index's.
-    const r = decide({ content: "no frontmatter here", zone: "permanent" });
+    const r = decide({ content: "no frontmatter here" });
     expect(r.action).toBe("write");
     if (r.action !== "write") throw new Error("unreachable");
     expect(r.newContent).toContain("title: Заметка");
@@ -193,7 +185,7 @@ describe("human-edit-detect: skip paths (anti-loop, load-bearing)", () => {
 describe("human-edit-detect: write paths", () => {
   it("permanent stamp: last_edited_by/updated/needs_review, body preserved", () => {
     const content = `---\ntitle: X\nauthor: boris\n---\n\n## Связи\n\n---\n\n# Тело`;
-    const r = decide({ content, zone: "permanent" });
+    const r = decide({ content });
     expect(r.action).toBe("write");
     expect(r.reason).toBe("stamp");
     if (r.action !== "write") throw new Error("unreachable");
@@ -208,8 +200,6 @@ describe("human-edit-detect: write paths", () => {
   it("permanent fill of a human's bare-body canon note: title/type/status/author/created", () => {
     const r = decide({
       content: "Просто текст без шапки",
-      zone: "permanent",
-      basename: "Моя идея.md",
       path: "/vault/01_Знания/Моя идея.md",
       birthtimeMs: Date.UTC(2026, 0, 2),
       mtimeMs: Date.UTC(2026, 5, 9),
@@ -230,8 +220,6 @@ describe("human-edit-detect: write paths", () => {
     const content = `---\nauthor: someoneElse\n---\nтело`;
     const r = decide({
       content,
-      zone: "permanent",
-      basename: "N.md",
       path: "/vault/01_Знания/N.md",
     });
     expect(r.action).toBe("write");
@@ -243,8 +231,6 @@ describe("human-edit-detect: write paths", () => {
   it("created falls back to mtime when birthtime is 0", () => {
     const r = decide({
       content: "x",
-      zone: "permanent",
-      basename: "n.md",
       path: "/vault/01_Знания/n.md",
       birthtimeMs: 0,
       mtimeMs: Date.UTC(2026, 6, 20),
@@ -255,7 +241,7 @@ describe("human-edit-detect: write paths", () => {
 
   it("permanent stamp overwrites a stale last_edited_by/updated", () => {
     const content = `---\nlast_edited_by: oldagent\nupdated: ${STALE_UPD}\n---\n\nтело`;
-    const r = decide({ content, zone: "permanent" });
+    const r = decide({ content });
     expect(r.action).toBe("write");
     if (r.action !== "write") throw new Error("unreachable");
     expect(r.newContent).toContain(`last_edited_by: ${HUMAN}`);
@@ -266,8 +252,6 @@ describe("human-edit-detect: write paths", () => {
   it("EN locale: permanent fill emits the folder's initial status", () => {
     const r = decide({
       content: "plain body",
-      zone: "permanent",
-      basename: "Idea.md",
       path: "/vault/01_Knowledge/Idea.md",
       taxonomy: TAXONOMY_EN,
     });
@@ -437,12 +421,10 @@ describe("smoke: detect pipeline on a test vault", () => {
     const content = fs.readFileSync(p, "utf-8");
     const d = decideUpdate({
       content,
-      zone: "permanent",
       human: HUMAN,
       nowMs: NOW,
       birthtimeMs: 0,
       mtimeMs: NOW,
-      basename: "X.md",
       path: p,
       vault,
       lastHash: null,
@@ -462,8 +444,8 @@ describe("smoke: detect pipeline on a test vault", () => {
     // The post-write hook just stamped this edit (fresh agent attribution).
     fs.writeFileSync(p, "---\ntitle: Y\nauthor: boris\n---\n\nтело\n", "utf-8");
     processFile(p, {
-      zone: "permanent",
       agent: "boris",
+      zone: "permanent",
       vault,
       now: new Date(NOW - 10_000), // 10s ago — inside the 90s window
       taxonomy: TAXONOMY_RU,
@@ -471,12 +453,10 @@ describe("smoke: detect pipeline on a test vault", () => {
     const content = fs.readFileSync(p, "utf-8");
     const d = decideUpdate({
       content,
-      zone: "permanent",
       human: HUMAN,
       nowMs: NOW,
       birthtimeMs: 0,
       mtimeMs: NOW,
-      basename: "Y.md",
       path: p,
       vault,
       lastHash: null,
@@ -499,8 +479,8 @@ describe("smoke: detect pipeline on a test vault", () => {
     const prev = snapshotVault(vault, TAXONOMY_RU);
     // The hook re-stamps service fields only (e.g. an Index pass).
     processFile(p, {
-      zone: "permanent",
       agent: "index",
+      zone: "permanent",
       vault,
       now: new Date(NOW),
       taxonomy: TAXONOMY_RU,

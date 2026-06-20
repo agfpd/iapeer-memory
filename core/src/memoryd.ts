@@ -981,7 +981,7 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
         silentStamps.set(rel, curr); // first sight: record, never judge
         continue;
       }
-      if (!isSilentEdit({ prev, curr, zone, nowMs: Date.now(), freshEditWindowS: opts.freshEditWindowS })) {
+      if (!isSilentEdit({ prev, curr, nowMs: Date.now(), freshEditWindowS: opts.freshEditWindowS })) {
         silentStamps.set(rel, curr);
         continue;
       }
@@ -1036,12 +1036,10 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
       }
       const decision = decideUpdate({
         content,
-        zone,
         human,
         nowMs: Date.now(),
         birthtimeMs: stat.birthtime ? stat.birthtime.getTime() : 0,
         mtimeMs: stat.mtime.getTime(),
-        basename: path.basename(filePath),
         path: filePath,
         vault: config.vaultPath,
         lastHash: lastSeenHashes.get(filePath) ?? null,

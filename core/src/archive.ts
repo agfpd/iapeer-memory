@@ -12,7 +12,6 @@
  * resolved with a numeric suffix.
  */
 
-import path from "node:path";
 import { isStale, type TaxonomyPreset } from "./taxonomy.js";
 
 /** First path segment of a vault-relative path. */

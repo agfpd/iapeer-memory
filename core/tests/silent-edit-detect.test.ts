@@ -56,38 +56,38 @@ describe("isSilentEdit — the zoned rule (design §3)", () => {
 
   it("THE PRECEDENT: body moved, stamp stood, 52 s window, permanent → SILENT", () => {
     const curr = readStampRecord(note("edited body — silent Bash write"));
-    expect(isSilentEdit({ prev, curr, zone: "permanent", nowMs: NOW })).toBe(true);
+    expect(isSilentEdit({ prev, curr, nowMs: NOW })).toBe(true);
   });
 
   it("hook echo: service-only change → semantic hash still → NOT silent", () => {
     const curr = readStampRecord(note("original body", { leb: "boris", updated: STALE_STAMP }));
     // same semantic hash as prev — BASE fails before stamps are even compared
     expect(curr.hash).toBe(prev.hash);
-    expect(isSilentEdit({ prev, curr, zone: "permanent", nowMs: NOW })).toBe(false);
+    expect(isSilentEdit({ prev, curr, nowMs: NOW })).toBe(false);
   });
 
   it("mtime-only event: identical content → NOT silent (iCloud echo class)", () => {
     const curr = readStampRecord(note("original body"));
-    expect(isSilentEdit({ prev, curr, zone: "permanent", nowMs: NOW })).toBe(false);
+    expect(isSilentEdit({ prev, curr, nowMs: NOW })).toBe(false);
   });
 
   it("honest stamped write: body AND stamp moved → NOT silent", () => {
     const curr = readStampRecord(
       note("edited body", { leb: "boris", updated: formatStamp(new Date(NOW)) }),
     );
-    expect(isSilentEdit({ prev, curr, zone: "permanent", nowMs: NOW })).toBe(false);
+    expect(isSilentEdit({ prev, curr, nowMs: NOW })).toBe(false);
   });
 
   it("permanent + STALE standing stamp → NOT silent (humanEditPass territory — the Obsidian case keeps its human attribution)", () => {
     const stalePrev = readStampRecord(note("original body", { updated: STALE_STAMP }));
     const curr = readStampRecord(note("edited body", { updated: STALE_STAMP }));
-    expect(isSilentEdit({ prev: stalePrev, curr, zone: "permanent", nowMs: NOW })).toBe(false);
+    expect(isSilentEdit({ prev: stalePrev, curr, nowMs: NOW })).toBe(false);
   });
 
   it("permanent with NO stamp at all (updated null) → not silent (nothing to be fresh against)", () => {
     const p = readStampRecord("---\ntitle: x\n---\nbody a\n");
     const c = readStampRecord("---\ntitle: x\n---\nbody b\n");
-    expect(isSilentEdit({ prev: p, curr: c, zone: "permanent", nowMs: NOW })).toBe(false);
+    expect(isSilentEdit({ prev: p, curr: c, nowMs: NOW })).toBe(false);
   });
 });
 
@@ -112,10 +112,10 @@ describe("restampUnstamped — the response", () => {
     const after: StampRecord = readStampRecord(restamped);
     expect(after.hash).toBe(before.hash); // semantic hash untouched
     // next pass: prev=after, curr=after → identical → never silent again
-    expect(isSilentEdit({ prev: after, curr: after, zone: "permanent", nowMs: NOW })).toBe(false);
+    expect(isSilentEdit({ prev: after, curr: after, nowMs: NOW })).toBe(false);
     // and even vs the pre-restamp record the stamp HAS moved → not silent
     expect(
-      isSilentEdit({ prev: before, curr: after, zone: "permanent", nowMs: NOW }),
+      isSilentEdit({ prev: before, curr: after, nowMs: NOW }),
     ).toBe(false);
   });
 });

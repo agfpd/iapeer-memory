@@ -43,7 +43,6 @@ import { indexAll } from "../src/indexer.js";
 import { runVaultSearch } from "../src/search.js";
 import {
   TAXONOMY_RU,
-  TAXONOMY_EN,
   getTaxonomy,
   defaultExcludeFolders,
   DEFAULT_RANKING,

@@ -6,12 +6,8 @@
  * exit 1 when something needs attention.
  */
 
-import fs from "node:fs";
-import path from "node:path";
 import {
   ensureLoopbackNotProxied,
-  getTaxonomy,
-  isLocaleId,
   prepareSqliteRuntime,
 } from "@agfpd/iapeer-memory-core";
 import type { Egress } from "../egress.js";
@@ -19,6 +15,7 @@ import { memoryPaths } from "../paths.js";
 import { readSlot } from "../slot.js";
 import { packageVersion } from "../version.js";
 import { paintStatus, ui } from "../ui.js";
+import { mcpPort } from "./provision-peer.js";
 import { runVerify } from "./verify.js";
 
 /**
@@ -140,7 +137,7 @@ export async function cmdStatus(argv: string[], egress: Egress): Promise<number>
         : "empty"),
   );
 
-  const port = Number(process.env.IAPEER_MEMORY_MCP_PORT || "") || 8766;
+  const port = mcpPort();
   const mcp = await probeMcp(egress, port);
   console.log(`      ${"mcp-endpoint".padEnd(width)}  ${mcp.line}`);
   // The live pipeline is only probed when the endpoint is alive — a dead

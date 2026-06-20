@@ -16,7 +16,6 @@ import {
   updateFile,
   fmUpdate,
   collectOps,
-  type Op,
 } from "../src/fm-update.js";
 import { splitFrontmatter } from "../src/frontmatter-fill.js";
 import { TAXONOMY_RU } from "../src/taxonomy.js";

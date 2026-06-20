@@ -84,13 +84,6 @@ export function upsertField(fm: string, key: string, value: string): string {
   return `${fm}${tail}${key}: ${value}\n`;
 }
 
-export function setIfMissing(fm: string, key: string, value: string): string {
-  const re = new RegExp(`^${key}\\s*:`, "m");
-  if (re.test(fm)) return fm;
-  const tail = fm.endsWith("\n") ? "" : "\n";
-  return `${fm}${tail}${key}: ${value}\n`;
-}
-
 export type HumanEditZone = "permanent";
 
 /** Zone of a file for the detector: permanent (the typed canon folders) /
@@ -118,12 +111,10 @@ export function getZone(
 
 export type DecideUpdateInput = {
   content: string;
-  zone: HumanEditZone;
   human: string;
   nowMs: number;
   birthtimeMs: number;
   mtimeMs: number;
-  basename: string;
   /** Absolute file path — the permanent branch derives the folder's genre
    *  (type/status) from it via the shared `fillPermanentFull` (lean §2.1). */
   path: string;

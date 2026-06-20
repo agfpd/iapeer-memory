@@ -23,7 +23,6 @@ import {
 import {
   renderDoctrine,
   renderRoleDoctrines,
-  stripTemplateFrontmatter,
   versionMarker,
   renderedVersion,
 } from "../src/render-doctrine.js";

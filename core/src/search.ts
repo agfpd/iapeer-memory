@@ -37,7 +37,7 @@ import { agentMemoryFolderMarker, statusGroup } from "./taxonomy.js";
  */
 export type PipelineStatus = {
   bm25: "ok";
-  embedding: EmbeddingStatus | "disabled" | "skipped";
+  embedding: EmbeddingStatus | "disabled";
   reranker: RerankerStatus | "disabled" | "skipped";
   graph: "ok";
   // Echo `config.callerAgent` + `forCuration` — диагностика проброса.
@@ -103,13 +103,14 @@ export async function runVaultSearch(params: {
   // Default initialisation учитывает наличие config:
   //   - endpoint не настроен в env → "disabled" (terminal, шаг никогда не
   //     запустится в этой сессии).
-  //   - endpoint настроен, но шаг ещё не выполнен / пропущен → "skipped"
-  //     (бывает при early-return, либо при reranker'е с ≤1 кандидатом).
-  // После реального вызова это значение перезаписывается фактическим
-  // EmbeddingStatus / RerankerStatus от модуля-клиента.
+  //   - reranker настроен, но шаг пропущен (≤1 кандидат) → "skipped" (это
+  //     init-значение доживает до вывода).
+  // Значение embedding ВСЕГДА перезаписывается фактическим EmbeddingStatus
+  // после реального вызова (шаг 2 выполняется при любом настроенном endpoint),
+  // поэтому его init — просто "disabled".
   const pipeline: PipelineStatus = {
     bm25: "ok",
-    embedding: config.embedding ? "skipped" : "disabled",
+    embedding: "disabled",
     reranker: config.reranker ? "skipped" : "disabled",
     graph: "ok",
     caller_agent: config.callerAgent,

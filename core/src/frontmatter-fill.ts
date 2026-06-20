@@ -41,7 +41,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import type { TaxonomyPreset } from "./taxonomy.js";
-import { DEFAULT_CURATOR_SET, genreForFolder, linksSectionPattern } from "./taxonomy.js";
+import { DEFAULT_CURATOR_SET, genreForFolder } from "./taxonomy.js";
 import { guardedWriteFileSync, guardedUnlinkSync } from "./fs-guard.js";
 
 const FRONTMATTER_RE = /^---[^\S\n]*\n([\s\S]*?\n)---[^\S\n]*(?:\n|$)/;
