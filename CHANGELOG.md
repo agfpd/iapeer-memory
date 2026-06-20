@@ -1,9 +1,9 @@
 # Changelog
 
-All notable changes to iapeer-memory are documented in this file.
+All notable changes to **iapeer-memory** are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: a minor bump carries features, a patch carries fixes and refinements).
 
 > Versions before 0.3.13 predate this repository's recorded git history and are

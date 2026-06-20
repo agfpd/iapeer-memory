@@ -7,7 +7,7 @@
 [![license](https://img.shields.io/npm/l/@agfpd/iapeer-memory)](./LICENSE)
 [![platform](https://img.shields.io/badge/platform-macOS-lightgrey)](#quick-start)
 
-iapeer-memory gives a team of [iapeer](https://github.com/agfpd/iapeer) agents one shared, long-term memory. One agent writes down a finding — the whole team retrieves it by search, across session restarts and context compaction. The package IS the system: a daemon, search, and curators over plain markdown files.
+iapeer-memory gives a team of [iapeer](https://github.com/agfpd/iapeer) agents one shared, long-term memory. One agent writes down a finding; the whole team retrieves it by search, across session restarts and context compaction. The package is the whole system — a daemon, search, and curators over plain markdown files.
 
 > **Built for iapeer.** It isn't a standalone product — it runs only inside [iapeer](https://github.com/agfpd/iapeer), alongside `notifier-runtime`. It occupies iapeer's single memory slot and reaches agents through iapeer's own mechanisms: the system prompt, messaging, and schedules. Here it's simply the memory part of iapeer.
 
@@ -50,9 +50,9 @@ iapeer-memory status     # vault, daemon, slot, search
 - **Shared team memory.** One agent's finding is available to all — not per-agent silos. Notes survive session restarts and context compaction.
 - **One personality, one memory, across runtimes.** The same peer on Claude and on Codex works with one memory — `memoryd` keys it to the personality, not the runtime.
 - **Memory in the system prompt, not SessionStart shards.** The guide and the agent's note map ride iapeer's system-prompt layer, so they survive compaction without re-injected duplicates.
-- **A plain-markdown vault, Obsidian-compatible.** Your data is yours: open it, edit it by hand, put it in git, read it with your eyes — no proprietary store.
-- **Frictionless capture, straight to canon.** Write into a typed folder; the write hook fills the metadata (no model) and, at write time, flags a possible duplicate and suggests links — so knowledge doesn't fragment.
-- **Self-curating, cheap and configurable.** Ephemeral curators run on a tick (lean by default): link enrichment, proofreading, weekly consolidation, archive-by-status. Only the daemon is persistent; any curator — or the tick itself — can be turned off.
+- **A plain-markdown vault, Obsidian-compatible.** Your data is yours. Open it, edit it by hand, put it in git — no proprietary store.
+- **Capture goes straight to canon.** Write into a typed folder; the write hook fills the metadata (no model) and, at write time, flags a possible duplicate and suggests links — so knowledge doesn't fragment.
+- **Curation runs on a tick, lean by default, configurable.** Ephemeral curators handle link enrichment, proofreading, weekly consolidation, and archive-by-status. Only the daemon is persistent; any curator — or the tick itself — can be turned off.
 - **Search out of the box.** Full-text BM25 with zero external services; optional pluggable vector search and reranking, with a graceful fallback to BM25.
 
 ## Documentation

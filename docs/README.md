@@ -30,10 +30,10 @@ iapeer-memory is the reference provider of the [iapeer](https://github.com/agfpd
 
 ## What it gives you
 
-- **The team remembers.** A finding made by one agent is available to the rest — no retelling, no copying between sessions.
-- **Knowledge isn't lost.** A note survives restarts and context compaction; an agent in a fresh session gets a map of its memory right in the system prompt.
-- **Search, not a dump.** `memory_search` finds by meaning and content; curation keeps the store in order — enriches links, repairs structure, merges duplicates. Stale notes move to the archive on their own, by status.
-- **Memory under watch.** Curators (Index, Scriber, DreamWeaver) spin up on a tick to enrich links, proofread canon, and consolidate personal notes; between ticks they don't exist — only the daemon is persistent.
+- **Shared across the team.** A finding made by one agent is available to the rest — no retelling, no copying between sessions.
+- **Survives restarts and compaction.** A note persists across sessions; an agent in a fresh session gets a map of its memory right in the system prompt.
+- **Retrieved by search, not dumped.** `memory_search` finds by meaning and content; curation keeps the store in order — enriches links, repairs structure, merges duplicates. Stale notes move to the archive on their own, by status.
+- **Curated automatically.** Curators (Index, Scriber, DreamWeaver) spin up on a tick to enrich links, proofread canon, and consolidate personal notes; between ticks they don't exist — only the daemon is persistent.
 
 ## Quick start
 
@@ -69,4 +69,4 @@ The command asks for the vault path, the language (Russian or English folder lay
 
 ## Status
 
-Shipped as a single npm package, `@agfpd/iapeer-memory` — the package IS the system (daemon, search, curators); an agent session connects to memory through direct per-peer surfaces. Search works on BM25 out of the box; vector search and reranking are optional add-ons. The platform is macOS, as with iapeer.
+Shipped as a single npm package, `@agfpd/iapeer-memory` — the package is the whole system (daemon, search, curators); an agent session connects to memory through direct per-peer surfaces. Search works on BM25 out of the box; vector search and reranking are optional add-ons. The platform is macOS, as with iapeer.
