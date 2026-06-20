@@ -8,7 +8,7 @@ injected into every peer's system prompt, and three curator role peers
 (index / scriber / dreamweaver) running an inverted vetting pipeline.
 
 The package IS the system: everything live enters through this CLI. The
-claude/codex plugins are thin per-session sockets that call back into it.
+claude/codex session surfaces are thin per-peer sockets that call back into it.
 
 ## Install
 
