@@ -11,7 +11,7 @@ import { linksSectionPattern, type TaxonomyPreset } from "./taxonomy.js";
  * under the new algorithm. Pure ranking/query changes that don't alter the
  * stored chunks do NOT need a bump.
  */
-export const PARSER_VERSION = "1";
+export const PARSER_VERSION = "2";
 
 const WIKILINK_RE = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
 
