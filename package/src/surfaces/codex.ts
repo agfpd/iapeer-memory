@@ -37,15 +37,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { IAPEER_BIN, type Egress } from "../egress.js";
 import {
+  isOurHookCommand,
   isOurHookEntry,
   materialiseShims,
   readJsonObject,
   sameJson,
   shimPath,
+  writeFileAtomic,
   type HookEntry,
   type SurfaceOutcome,
 } from "./claude.js";
-import { guardedWriteFileSync, guardedUnlinkSync } from "@agfpd/iapeer-memory-core";
+import { guardedUnlinkSync } from "@agfpd/iapeer-memory-core";
 
 export const CODEX_MCP_SECTION = "mcp_servers.iapeer-memory";
 const SECTION_HEADER_RE = /^\s*\[/;
@@ -66,13 +68,6 @@ export function expectedCodexBlock(port: number): string {
     `"X-IAPeer-Identity" = "PEER_IDENTITY"`,
     "",
   ].join("\n");
-}
-
-function writeFileAtomic(filePath: string, content: string): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const tmp = `${filePath}.tmp`;
-  guardedWriteFileSync(tmp, content, "utf-8");
-  fs.renameSync(tmp, filePath);
 }
 
 /** Strip every section under OUR header namespace; foreign lines unchanged. */
@@ -241,7 +236,7 @@ export function removeCodexHooks(opts: { cwd: string }): SurfaceOutcome {
         if (!isOurHookEntry(entry)) return entry;
         const e = entry as HookEntry;
         const foreignHooks = e.hooks.filter(
-          (h) => !(typeof h?.command === "string" && h.command.split("/").pop()?.startsWith("iapeer-memory.")),
+          (h) => !(typeof h?.command === "string" && isOurHookCommand(h.command)),
         );
         if (foreignHooks.length === 0) return null;
         return { ...e, hooks: foreignHooks };

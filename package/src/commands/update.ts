@@ -34,6 +34,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   configFromEnv,
+  FRAGMENT_STEM,
   isLocaleId,
   renderDoctrine,
   resolveMode,
@@ -341,7 +342,7 @@ export function cmdUpdate(argv: string[], egress: Egress): number {
   // placeholder left peers without the write path).
   {
     const iapeerDir = path.dirname(paths.slotPath);
-    const guidePath = path.join(iapeerDir, "fragments", "iapeer-memory.md");
+    const guidePath = path.join(iapeerDir, "fragments", FRAGMENT_STEM);
     if (!fs.existsSync(guidePath)) {
       step("guide", "not rolled out on this host — left untouched (roll out via init)");
     } else if (!vaultPathForDoctrines) {

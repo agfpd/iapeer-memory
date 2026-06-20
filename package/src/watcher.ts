@@ -389,7 +389,7 @@ export function readWatcherTrigger(opts: {
   role?: "event" | "time";
 }): WatcherTrigger | null {
   const id = opts.id ?? WATCHER_TRIGGER_ID;
-  const owner = opts.owner ?? "index";
+  const owner = opts.owner ?? DEFAULT_REGISTRANT;
   const role = opts.role ?? "event";
   try {
     const profile = JSON.parse(

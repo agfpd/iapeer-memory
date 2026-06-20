@@ -95,7 +95,7 @@ function shimContent(verb: "post-write" | "session-start"): string {
   ].join("\n");
 }
 
-function writeFileAtomic(filePath: string, content: string, mode?: number): void {
+export function writeFileAtomic(filePath: string, content: string, mode?: number): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tmp = `${filePath}.tmp`;
   guardedWriteFileSync(tmp, content, "utf-8");
