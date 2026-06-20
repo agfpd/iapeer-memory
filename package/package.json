@@ -1,6 +1,6 @@
 {
   "name": "@agfpd/iapeer-memory",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "iapeer-memory — peer memory for the iapeer ecosystem: vault, memoryd (index/search/MCP over HTTP), context fragments, role doctrines. The package IS the system; session surfaces are direct per-peer files merged into each peer's cwd. See docs/README.md.",
   "license": "Apache-2.0",
   "type": "module",
@@ -29,7 +29,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@agfpd/iapeer-memory-core": "0.4.1"
+    "@agfpd/iapeer-memory-core": "0.4.2"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",
