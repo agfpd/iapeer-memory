@@ -5,7 +5,8 @@
  * there); everything diagnostic — both the MCP frontend and the writer
  * daemon — funnels through here so a single grep on stderr captures the
  * full picture. The `[iapeer-memory <kind>]` prefix lets log aggregators
- * distinguish reader and writer processes when they share a tmux pane.
+ * distinguish reader and writer processes when their stderr is interleaved in
+ * a shared pane.
  */
 
 export type Logger = {

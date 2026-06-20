@@ -13,7 +13,7 @@ TS-примитив: taxonomy / поиск / memoryd / рендеры) + `packag
 - Тесты идут под предохранителем `IAPEER_MEMORY_SUPPRESS_IAP_SEND=1`
   (bunfig `[test].preload` в root И в `package/` — сырой `bun test` из обоих
   cwd накрыт): тест никогда не дотягивается до живого notifier, потому что
-  tmux-сокеты в `/tmp` host-глобальны и песочный `IAPEER_ROOT` реальный send
+  сокеты notifier host-глобальны и песочный `IAPEER_ROOT` реальный send
   НЕ сдерживает. Тесту, которому нужен spawn-путь, нужны fake-bin + локальное
   снятие env (образец: `package/tests/watcher.test.ts`).
 

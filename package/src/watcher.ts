@@ -259,7 +259,7 @@ function iapSend(
   },
 ): IapSendResult {
   // The hard fuse (prod Index: crashlooping temp-path
-  // triggers; /tmp tmux sockets are host-global, no sandbox env contains a
+  // triggers; the notifier's sockets are host-global, no sandbox env contains a
   // real send) lives in the EGRESS CONSTRUCTOR now (deny-by-default §4):
   // under a test sandbox this handle refuses the spawn before it happens.
   const bin = opts.iapeerBin ?? IAPEER_BIN;

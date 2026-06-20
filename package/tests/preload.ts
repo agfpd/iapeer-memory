@@ -4,7 +4,7 @@
  *
  * HARD FUSE: verify-repair tests spawned the
  * real `iapeer` and registered crashlooping temp-path watcher triggers with
- * the LIVE notifier — /tmp tmux sockets are host-global, so no sandbox env
+ * the LIVE notifier — the notifier's sockets are host-global, so no sandbox env
  * contains a real send. iapSend (src/watcher.ts) refuses while this env is
  * set; tests that need the spawn path inject a fake bin AND clear the var
  * locally.
