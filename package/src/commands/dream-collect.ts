@@ -16,11 +16,11 @@
  *   - a folder with no in-window activity is SKIPPED — it never reaches an
  *     LLM (the «папка без работы → ноль LLM» criterion).
  *
- * OUTPUT is Q1-AGNOSTIC and FLAT: `{vault, windowDays, folders[], skipped[]}`.
- * It deliberately does NOT pre-package task-units / batching: whether
- * DreamWeaver processes the folders sequentially in one window or fans out
- * subagents (open question Q1) is a LAST layer that sits
- * on this structure without touching the deterministic core.
+ * The deterministic collect() core stays FLAT (per-author `folders`); an in-file
+ * batching layer (`batchTasks`) then packages those folders into ready
+ * task-units. EMITTED OUTPUT: `{vault, windowDays, batchThreshold, groupCap,
+ * tasks[], skipped[]}` — DreamWeaver fans out one subagent per task (Q1,
+ * answered here), without the deterministic core knowing about it.
  *
  * `--gate` runs the same collection but suppresses stdout and exits 0 iff
  * there is ANY active folder (1 ⇔ a dead week). It is the notifier `check`

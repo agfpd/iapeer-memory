@@ -49,8 +49,9 @@ export async function runSearch(
  * `vault_read` is deliberately NOT part of the surface — in-session reading
  * is the harness's native Read (after memory_search the path is known), and
  * backlinks are covered by memory_related(depth=1, incoming). `runRead` below
- * stays a LIBRARY function of core — for memoryd, the Index runtime, CLI and
- * programmatic consumers outside harness sessions.
+ * is retained as a hardened LIBRARY function (path-traversal / null-byte /
+ * exclude-folder tests) with no in-repo consumer today — a deliberate seam for
+ * programmatic readers outside harness sessions.
  */
 export const MCP_TOOL_SURFACE = ["memory_search", "memory_related", "memory_map"] as const;
 

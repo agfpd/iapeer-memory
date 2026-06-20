@@ -48,7 +48,8 @@ export async function indexAll(params: {
 /**
  * Register a title/basename → docPath association. List-valued so collisions
  * (same basename in different folders) are detectable, not last-writer-wins.
- * Exported because the watcher maintains the same map incrementally.
+ * An internal helper of indexFile (its only caller); titleToPath is rebuilt
+ * from scratch on each full scan — there is no incremental title-map consumer.
  */
 export function addTitlePath(
   map: Map<string, string[]>,
