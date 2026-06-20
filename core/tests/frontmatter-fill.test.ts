@@ -742,6 +742,21 @@ describe("normalizeLinksBlock (lean §2.2 — parser recognises the block)", () 
     const body = "## Связи\n- [[A]]\nконтент без разделителя";
     expect(normalizeLinksBlock(body, ru)).toBe(body);
   });
+
+  it("canonicalises a malformed TRAILING heading (##Связи → ## Связи)", () => {
+    const body = "контент\n\n##Связи\n- [[A]] — why";
+    expect(normalizeLinksBlock(body, ru)).toBe("контент\n\n## Связи\n- [[A]] — why");
+  });
+
+  it("idempotent on an already-canonical trailing block", () => {
+    const body = "тело заметки\n\n## Связи\n- [[A]] — why";
+    expect(normalizeLinksBlock(body, ru)).toBe(body);
+  });
+
+  it("does not touch a trailing bullet list with no links heading", () => {
+    const body = "шаги:\n- первый\n- второй";
+    expect(normalizeLinksBlock(body, ru)).toBe(body);
+  });
 });
 
 describe("list/coauthor helpers (lean §3a)", () => {

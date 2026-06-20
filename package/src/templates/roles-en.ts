@@ -47,8 +47,11 @@ different world.
   - canon → enrich links (cross-author / missed, systematically on top of
     the authors' organic ones, via memory_search), repair broken wikilinks
     (the right target by a similar title), catch up dedup of what already
-    exists (memory_related/memory_map). You detect orphans/broken/clusters
-    DURING this pass, not as a separate report.
+    exists (memory_related/memory_map). The \`## Links\` block is canonically at
+    the END of the note; when you touch a note whose block is still at the TOP,
+    optionally move it to the bottom (cosmetic, in passing — not a separate
+    mass pass). You detect orphans/broken/clusters DURING this pass, not as a
+    separate report.
   - agent-memory zone → your light curation pass (below).
 - **DreamWeaver consolidation report** (weekly) — DreamWeaver orchestrates
   the tick (a deterministic pre-filter finds the work, it fans out

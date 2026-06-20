@@ -95,28 +95,54 @@ export function parseMarkdown(content: string, relativePath: string, chunkSize: 
 }
 
 /**
- * Strip the leading links-section block (taxonomy.linksSection heading)
- * from a note body before chunking.
+ * Strip the links-section block (taxonomy.linksSection heading + its [[wikilink]]
+ * list) from a note body before chunking. The links section is graph metadata,
+ * not semantic content — feeding it to BM25/embeddings produces false hits on
+ * every note that mentions a popular wikilink target, and the snippet fallback
+ * in search.ts pulls the first chunk which (without this strip) is just links.
  *
- * Vault notes follow a fixed structure: body starts with the links-section heading containing
- * a list of [[wikilinks]], then a horizontal rule "---", then the actual
- * content. The links section is graph metadata, not semantic content — feeding
- * it to BM25/embeddings produces false hits on every note that mentions a
- * popular wikilink target, and the snippet fallback in search.ts pulls the
- * first chunk which (without this strip) is always just the links block.
- *
- * Only strips when both conditions hold: body starts with the heading AND a
- * "---" divider follows. Notes without that structure pass through unchanged.
+ * Two positions are tolerated (the canon convention is the block at the BOTTOM;
+ * the TOP form stays recognised for notes not yet migrated):
+ *   LEADING — body starts with the heading AND a "---" divider follows; the
+ *     indexable content is everything after the divider.
+ *   TRAILING — a heading at the END whose following lines are all link items /
+ *     blanks; the indexable content is everything before it (and before a "---"
+ *     divider sitting directly above it, if any).
+ * Notes without either structure pass through unchanged. The wikilinks
+ * themselves are still extracted from the FULL body (graph edges are unaffected
+ * by this strip) — see extractWikilinks.
  */
 export function stripLinksSection(body: string, taxonomy: TaxonomyPreset): string {
   // The heading pattern comes from the taxonomy preset (ADR-002): `## Links`
   // for the EN base, `## Связи` for RU. linksSectionPattern uses (?:\s|$)
   // instead of `\b` — JS \b is ASCII-only and useless after a cyrillic
   // letter (the strip silently no-op'd on every RU note before this fix).
-  if (!linksSectionPattern(taxonomy).test(body)) return body;
-  const dividerMatch = body.match(/\n---\s*\n/);
-  if (!dividerMatch || dividerMatch.index === undefined) return body;
-  return body.slice(dividerMatch.index + dividerMatch[0].length).trim();
+  if (linksSectionPattern(taxonomy).test(body)) {
+    const dividerMatch = body.match(/\n---\s*\n/);
+    if (!dividerMatch || dividerMatch.index === undefined) return body;
+    return body.slice(dividerMatch.index + dividerMatch[0].length).trim();
+  }
+  // Trailing block: scan up from the end over link-list items / blanks; a
+  // links heading there delimits a bottom block, a content line means there
+  // is none.
+  const lines = body.split("\n");
+  let h = -1;
+  for (let k = lines.length - 1; k >= 0; k--) {
+    const t = lines[k].trim();
+    if (t === "") continue;
+    if (linksSectionPattern(taxonomy).test(lines[k])) {
+      h = k;
+      break;
+    }
+    if (t.startsWith("-") || t.startsWith("*")) continue;
+    break;
+  }
+  if (h === -1) return body;
+  let cut = h;
+  let p = h - 1;
+  while (p >= 0 && lines[p].trim() === "") p--;
+  if (p >= 0 && /^[ \t]*-{3,}[ \t]*$/.test(lines[p])) cut = p;
+  return lines.slice(0, cut).join("\n").trim();
 }
 
 /**

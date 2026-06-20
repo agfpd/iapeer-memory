@@ -74,7 +74,7 @@ Tags come from the dictionary \`99_System/Tags.md\`, ≥1 per canon note. No fit
 
 **Links: inline and the \`## Links\` block.** A \`[[Note]]\` reference comes in two forms — both go into the graph equally:
 - **inline** — right in the text, when the note IS part of what you're saying ("as in [[X]]").
-- **the \`## Links\` block** — a separate link to a related note that isn't in the text but is conceptually nearby. Each line: \`- [[X]] — how it relates\` (related / extends / contradicts / applies). The explanation is mandatory — name the gist of the link in one phrase; it also keeps you from linking blind.
+- **the \`## Links\` block** — a separate link to a related note that isn't in the text but is conceptually nearby. **Place it at the END of the note, after the body.** Each line: \`- [[X]] — how it relates\` (related / extends / contradicts / applies). The explanation is mandatory — name the gist of the link in one phrase; it also keeps you from linking blind. Tags go in the frontmatter, not in this block.
 
 ### Your memory → your own folder
 

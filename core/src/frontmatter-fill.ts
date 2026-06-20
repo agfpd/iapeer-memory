@@ -548,32 +548,52 @@ function isFuzzyLinksHeading(line: string, taxonomy: TaxonomyPreset): boolean {
 }
 
 /**
- * Make a leading links-section block recognisable to the parser's
- * `stripLinksSection` (heading at body start + a `---` divider), so the block
- * is cut from search/embedding content instead of polluting BM25 with
- * popular-target false hits (lean §2.2). CONSERVATIVE and mechanical (§10.2):
- * only the heading line FORM and the block's HR divider are rewritten — never
- * content, nothing inserted or moved. Body without a leading links heading →
- * no-op. Idempotent.
+ * Make a links-section block recognisable to the parser's `stripLinksSection`
+ * (canonical heading form, plus a `---` divider for a leading block), so the
+ * block is cut from search/embedding content instead of polluting BM25 with
+ * popular-target false hits (lean §2.2). Tolerates BOTH positions — the canon
+ * convention is the block at the BOTTOM, the TOP form stays recognised:
+ *   LEADING — heading at body start + the block's HR divider.
+ *   TRAILING — a heading at the END (the heading itself bounds the block, so
+ *     there is no divider to normalise).
+ * CONSERVATIVE and mechanical (§10.2): only the heading line FORM (and, for a
+ * leading block, its HR divider) is rewritten — never content, nothing inserted
+ * or moved. No links heading → no-op. Idempotent.
  */
 export function normalizeLinksBlock(body: string, taxonomy: TaxonomyPreset): string {
   const lines = body.split("\n");
+  // LEADING block: the first non-empty line is a links heading.
   let i = 0;
   while (i < lines.length && lines[i].trim() === "") i++;
-  if (i >= lines.length || !isFuzzyLinksHeading(lines[i], taxonomy)) return body;
-  if (lines[i] !== taxonomy.linksSection) lines[i] = taxonomy.linksSection;
-  // Normalise the block's first HR divider to `---`. Scan only across the link
-  // list (`- …` / `* …` items and blanks); a content line means no divider —
-  // leave it (the heading fix alone is the safe part).
-  for (let j = i + 1; j < lines.length; j++) {
-    if (HR_LINE_RE.test(lines[j])) {
-      if (lines[j].trim() !== "---") lines[j] = "---";
-      break;
+  if (i < lines.length && isFuzzyLinksHeading(lines[i], taxonomy)) {
+    if (lines[i] !== taxonomy.linksSection) lines[i] = taxonomy.linksSection;
+    // Normalise the block's first HR divider to `---`. Scan only across the
+    // link list (`- …` / `* …` items and blanks); a content line means no
+    // divider — leave it (the heading fix alone is the safe part).
+    for (let j = i + 1; j < lines.length; j++) {
+      if (HR_LINE_RE.test(lines[j])) {
+        if (lines[j].trim() !== "---") lines[j] = "---";
+        break;
+      }
+      const t = lines[j].trim();
+      if (t !== "" && !t.startsWith("-") && !t.startsWith("*")) break;
     }
-    const t = lines[j].trim();
-    if (t !== "" && !t.startsWith("-") && !t.startsWith("*")) break;
+    return lines.join("\n");
   }
-  return lines.join("\n");
+  // TRAILING block (canonical bottom): scan up from the end over link-list
+  // items / blanks; a links heading there is the block — canonicalise its form
+  // (the heading bounds the block, so there is no divider to touch).
+  for (let k = lines.length - 1; k >= 0; k--) {
+    const t = lines[k].trim();
+    if (t === "") continue;
+    if (isFuzzyLinksHeading(lines[k], taxonomy)) {
+      if (lines[k] !== taxonomy.linksSection) lines[k] = taxonomy.linksSection;
+      return lines.join("\n");
+    }
+    if (t.startsWith("-") || t.startsWith("*")) continue;
+    break;
+  }
+  return body;
 }
 
 /**

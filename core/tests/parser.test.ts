@@ -80,6 +80,21 @@ for (const T of [TAXONOMY_RU, TAXONOMY_EN]) {
       const body = `${T.linksSection}\n[[Foo]]\nNo divider.`;
       expect(stripLinksSection(body, T)).toBe(body);
     });
+
+    it("strips a trailing links block (canonical bottom)", () => {
+      const body = `Actual content.\n\n${T.linksSection}\n- [[Foo]] — why\n- [[Bar]] — how`;
+      expect(stripLinksSection(body, T)).toBe("Actual content.");
+    });
+
+    it("strips a trailing links block even with a divider directly above it", () => {
+      const body = `Actual content.\n\n---\n\n${T.linksSection}\n- [[Foo]] — why`;
+      expect(stripLinksSection(body, T)).toBe("Actual content.");
+    });
+
+    it("leaves a trailing bullet list that is NOT a links block", () => {
+      const body = "Steps:\n- first\n- second";
+      expect(stripLinksSection(body, T)).toBe(body);
+    });
   });
 }
 
@@ -234,6 +249,20 @@ Real content here.`;
     // not the Связи block.
     expect(out.chunks[0]?.text).toContain("Real content here.");
     expect(out.chunks[0]?.text).not.toContain("## Связи");
+  });
+
+  it("strips a TRAILING ## Связи block before chunking (canonical bottom)", () => {
+    const md = `---
+title: Linked
+---
+
+Real content here.
+
+## Связи
+- [[Foo]] — why`;
+    const out = parseMarkdown(md, "x.md", 500, 80, TAXONOMY_RU);
+    expect(out.chunks[0]?.text).toContain("Real content here.");
+    expect(out.chunks.some((c) => c.text.includes("## Связи"))).toBe(false);
   });
 
   it("wikilinks are extracted from full body (including Связи)", () => {
