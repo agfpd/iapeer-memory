@@ -57,7 +57,6 @@ describe("memory-provider slot (v1.2)", () => {
       heartbeat: "/state/memoryd.heartbeat",
       ...slotProvisionBlocks(BIN),
     });
-    expect(slot.plugin).toBeUndefined(); // v1.1 deprecation: an old core must see «provider without a plugin»
     expect(fs.existsSync(`${slotPath}.tmp`)).toBe(false); // no temp residue
   });
 
@@ -84,27 +83,6 @@ describe("memory-provider slot (v1.2)", () => {
     });
     // a relative command would read as an invalid block at the core (fail-open)
     expect(path.isAbsolute(blocks.provision.command)).toBe(true);
-  });
-
-  it("a v1.1 declaration (ours, plugin block) is MIGRATED on re-write — same version is NOT identical", () => {
-    fs.mkdirSync(path.dirname(slotPath), { recursive: true });
-    fs.writeFileSync(
-      slotPath,
-      JSON.stringify({
-        provider: SLOT_PROVIDER,
-        package: SLOT_PACKAGE,
-        version: "1.2.3",
-        registeredAt: "2026-06-01T00:00:00.000Z",
-        heartbeat: "/h",
-        plugin: { name: "iapeer-memory", marketplace: "agfpd", marketplaceRef: "agfpd/agfpd-marketplace" },
-      }),
-    );
-    const r = writeSlot({ slotPath, version: "1.2.3", binaryPath: BIN, heartbeat: "/h" });
-    expect(r.action).toBe("written"); // v1.1 → v1.2 migration, not identical
-    expect(r.existing?.plugin).toBeDefined(); // callers key the plugin-off migration on this
-    const slot = readSlot(slotPath)!;
-    expect(slot.plugin).toBeUndefined();
-    expect(slot.provision).toEqual(slotProvisionBlocks(BIN).provision);
   });
 
   it("re-init with the same version+binary is idempotent (no churn, registeredAt kept)", () => {

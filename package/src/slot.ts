@@ -17,17 +17,13 @@
  *   the core shells into at peer birth / verb sweeps / peer removal. The
  *   core never learns the surface forms; placeholders {cwd} {runtime}
  *   {personality} {occasion} substitute PER-ARGUMENT (argv spawn, no shell,
- *   120s timeout, best-effort + loud warn). Precedence at the core:
- *   provision > plugin with NO runtime fallback;
- * - `plugin` (v1.1, deprecated by v1.2): we no longer WRITE it. An old core
- *   reads our v1.2 slot as «provider without a plugin» and honestly skips the
- *   birth install; the newborn is picked up by the verify --repair sweep. The
- *   type keeps the field as a READ-only mirror of the foundation's slot
- *   contract (iapeer's MemoryProviderPlugin) and to detect a stray v1.1 slot in
- *   the writeSlot idempotency guard. The command-level v1.1→v1.2 migration
- *   apparatus has been REMOVED (ADR-017) — migrating an old host is a
- *   documented manual step (uninstall + re-init); see
- *   docs/10-iapeer-integration.md.
+ *   120s timeout, best-effort + loud warn; no runtime fallback).
+ *
+ * The v1.1 marketplace-plugin channel is fully gone (ADR-017): the foundation
+ * no longer reads or writes a `plugin` slot block (its v1.1 parser is a
+ * tombstone), and this package no longer carries the field. Migrating a
+ * pre-v1.2 host is a documented manual step (uninstall + re-init) — see
+ * docs/10-iapeer-integration.md.
  */
 
 import fs from "node:fs";
@@ -40,17 +36,6 @@ import {
 
 export const SLOT_PROVIDER = "iapeer-memory";
 export const SLOT_PACKAGE = "@agfpd/iapeer-memory";
-
-/** Mirror of iapeer's MemoryProviderPlugin (src/status/index.ts). v1.1
- *  legacy: READ-only here (migration off-path); v1.2 slots no longer carry it. */
-export type MemoryProviderPlugin = {
-  /** Plugin id in the marketplace (forms `<name>@<marketplace>`). */
-  name: string;
-  /** Marketplace NAME the plugin id keys on. */
-  marketplace: string;
-  /** Source ref for `plugin marketplace add` when absent on the host (owner/repo). */
-  marketplaceRef: string;
-};
 
 /** v1.2 provision command block — argv form (§7 req 1: per-argument
  *  placeholder substitution, spawn without a shell). */
@@ -95,8 +80,6 @@ export type MemoryProviderSlot = {
   version: string;
   registeredAt: string;
   heartbeat?: string;
-  /** v1.1 legacy (read for migration; never written by v1.2 code). */
-  plugin?: MemoryProviderPlugin;
   /** v1.2 (ADR-009 v1.2). */
   provision?: MemoryProviderCommand;
   unprovision?: MemoryProviderCommand;
@@ -141,7 +124,6 @@ export function writeSlot(opts: {
     existing.version === opts.version &&
     existing.heartbeat === opts.heartbeat &&
     existing.package === SLOT_PACKAGE &&
-    existing.plugin === undefined && // a v1.1 slot (plugin block) must MIGRATE to the v1.2 form
     JSON.stringify(existing.provision) === JSON.stringify(blocks.provision) &&
     JSON.stringify(existing.unprovision) === JSON.stringify(blocks.unprovision)
   ) {
@@ -172,10 +154,3 @@ export function removeSlot(slotPath: string): SlotRemoveResult {
   guardedUnlinkSync(slotPath);
   return "removed";
 }
-
-// applyMemoryPlugin (the core verb `iapeer memory-plugin <on|off> --all`) was
-// REMOVED with the plugin channel (ADR-017). The command-level v1.1 migration
-// apparatus has since been removed too — migrating an old host is a manual step
-// (uninstall + re-init), documented in docs/10-iapeer-integration.md. The
-// `plugin` field on the slot type stays as a foundation-contract mirror /
-// writeSlot v1.1-detection marker (pending an iapeer slot-contract sync).

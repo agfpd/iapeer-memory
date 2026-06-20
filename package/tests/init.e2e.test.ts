@@ -80,7 +80,6 @@ describe("init (local half, sandboxed)", () => {
     );
     expect(slot.provider).toBe("iapeer-memory");
     expect(slot.heartbeat).toBe(path.join(tmp, "state", "memoryd.heartbeat"));
-    expect(slot.plugin).toBeUndefined();
     expect(slot.provision.args).toContain("provision-peer");
     expect(slot.provision.args).toContain("{personality}");
     expect(slot.unprovision.args[0]).toBe("unprovision-peer");
