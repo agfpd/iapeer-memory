@@ -14,6 +14,10 @@ dist/
 .claude/skills/iapeer-memory-*/
 .codex/
 
+# session dev-instruction read from the peer cwd (AGENTS.md, CLAUDE.md → symlink) — not the public product
+/AGENTS.md
+/CLAUDE.md
+
 # internal mechanics docs & specs — kept local for development, excluded from the public release
 docs/internals/
 docs/ТЗ-*.md
