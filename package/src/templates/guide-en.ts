@@ -98,7 +98,7 @@ Part of it is shared team knowledge, part is your memory → do **both**: into t
 
 **The canon is team knowledge, edit it freely** (your own and others'): reword, replace stale text in place, no "## Update YYYY-MM-DD" journals. **Memory is edited only by its author** (a personal zone).
 
-From the frontmatter you change ONLY \`status\` (by the type's scale, from the "Storage layout" table above). You don't touch \`type\`, the tag structure, or another agent's memory; \`needs_review\` is set by mechanics and cleared by the Index or the human — not you.
+From the frontmatter you change ONLY \`status\` (by the type's scale, from the "Storage layout" table above). You don't touch \`type\`, the tag structure, or another agent's memory. **\`needs_review\` is a MECHANIC's flag, not yours:** the mechanics set it, the Index or the human clears it — NOT you. If it appears after your edit, do NOT clear it and do NOT write to / notify the Index about it: the Index sweeps flagged notes on its own in the background, on the curation cadence (≈6 hours). Just carry on — there is nothing to do or report.
 
 Don't delete notes by hand. Set the final \`status\` — it's archived automatically (moved to \`07_Archive\`, links intact, the note stays in search with the stale de-boost). The final status IS the deletion: knowledge/list/memory → \`outdated\`, decision → \`superseded\`, idea → \`dropped\`, project/phase → \`completed\`/\`cancelled\`.
 
