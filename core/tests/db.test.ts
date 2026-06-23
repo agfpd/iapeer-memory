@@ -722,4 +722,35 @@ describe("vec_chunks dimension migration", () => {
       h.close();
     },
   );
+
+  it.skipIf(!VEC_AVAILABLE)(
+    "checkEmbeddingModelChanged clears stale vec_chunks on a SAME-dimension model swap",
+    () => {
+      // The dimension-mismatch drop above does NOT fire when only the model
+      // name changes (same dim). Without checkEmbeddingModelChanged clearing the
+      // vec mirror, the old model's vectors would linger and — under memoryd's
+      // serve-first startup — be searched against a new-model query before the
+      // background re-embed overwrites them. This guards that clear.
+      const p = path.join(tmpDir, "vec-modelswap.db");
+
+      // First boot: model A at dim 4, fingerprint set, one vector stored.
+      let h = openDatabase(makeConfigWithEmbedding(p, 4), { migrateVecDimension: true });
+      checkEmbeddingModelChanged(h, { model: "model-A", dimensions: 4 });
+      insertOneEmbedding(h, "e.md", "h1", [0.1, 0.2, 0.3, 0.4]);
+      expect(vecRowCount(h)).toBe(1);
+      h.close();
+
+      // Reboot: SAME dim 4, DIFFERENT model. migrateVecDimension preserves the
+      // table (dim unchanged) — the stale vector survives until the model check.
+      h = openDatabase(makeConfigWithEmbedding(p, 4), { migrateVecDimension: true });
+      expect(vecChunksDimension(h)).toBe(4);
+      expect(vecRowCount(h)).toBe(1); // still the OLD vector at this point
+
+      const invalidated = checkEmbeddingModelChanged(h, { model: "model-B", dimensions: 4 });
+      expect(invalidated).toBe(true);
+      expect(vecRowCount(h)).toBe(0); // vec mirror cleared
+      expect(getChunksWithoutEmbeddings(h, 10)).toHaveLength(1); // chunk awaits re-embed
+      h.close();
+    },
+  );
 });

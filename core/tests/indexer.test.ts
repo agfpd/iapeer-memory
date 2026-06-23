@@ -1,12 +1,18 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, vi } from "bun:test";
 import { getTaxonomy, DEFAULT_RANKING } from "../src/taxonomy.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { openDatabase, getUnresolvedLinks } from "../src/db.js";
+import {
+  openDatabase,
+  getUnresolvedLinks,
+  getChunksWithoutEmbeddings,
+  countChunksWithoutEmbeddings,
+} from "../src/db.js";
 import type { CoreDb } from "../src/db.js";
 import type { CoreConfig } from "../src/config.js";
-import { indexAll } from "../src/indexer.js";
+import { indexAll, embedMissingChunks } from "../src/indexer.js";
+import { _resetEmbeddingCircuitForTests } from "../src/embedding.js";
 import { runMap } from "../src/mcp-tools.js";
 
 const noopLogger = { info: () => {}, warn: () => {}, error: () => {} };
@@ -175,5 +181,117 @@ describe("resolveWikilinks — Audit #3 (path-aware) + #5 (observable)", () => {
     expect(detail.orphan_wikilinks).toHaveLength(1);
     expect(detail.orphan_wikilinks[0]!.target).toBe("Nope");
     expect(detail.orphan_wikilinks[0]!.reason).toBe("missing");
+  });
+});
+
+describe("indexAll — deferred embedding (serve-first background backfill)", () => {
+  const DIMS = 8;
+
+  function embedConfig(): CoreConfig {
+    return {
+      ...makeConfig(vault, path.join(tmpDir, "embed.db")),
+      embedding: {
+        endpoint: "http://fake/v1/embeddings",
+        model: "fake-model",
+        dimensions: DIMS,
+        batchSize: 32,
+        apiKey: null,
+      },
+    };
+  }
+
+  // Mock the embedder so the count returned matches each request's input
+  // count (indexer maps result.vectors[i] per missing chunk — a short array
+  // would throw). Returns the spy so tests can assert call/no-call.
+  function mockEmbedder() {
+    return vi
+      .spyOn(
+        globalThis as unknown as { fetch: (...args: unknown[]) => Promise<Response> },
+        "fetch",
+      )
+      .mockImplementation(async (...args: unknown[]) => {
+        const init = args[1] as { body?: unknown } | undefined;
+        const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string[] };
+        const n = Array.isArray(body.input) ? body.input.length : 1;
+        const vecs = Array.from({ length: n }, () =>
+          Array.from({ length: DIMS }, () => 0.1),
+        );
+        return new Response(
+          JSON.stringify({ data: vecs.map((v) => ({ embedding: v })) }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      });
+  }
+
+  let edb: CoreDb;
+  beforeEach(() => _resetEmbeddingCircuitForTests());
+  afterEach(() => {
+    try { edb?.close(); } catch {}
+    vi.restoreAllMocks();
+  });
+
+  it("embed:false indexes structurally but leaves embeddings NULL (embedder untouched)", async () => {
+    writeNote("01_Знания/A.md", "---\ntitle: A\n---\nalpha body content for chunking");
+    const fetchSpy = mockEmbedder();
+    const cfg = embedConfig();
+    edb = openDatabase(cfg);
+
+    await indexAll({ db: edb, config: cfg, logger: noopLogger, embed: false });
+
+    // structural work happened — chunks exist — but none are embedded yet
+    expect(countChunksWithoutEmbeddings(edb)).toBeGreaterThan(0);
+    expect(getChunksWithoutEmbeddings(edb, 100).length).toBeGreaterThan(0);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("default (embed:true) embeds inline — back-compat for incremental/CLI callers", async () => {
+    writeNote("01_Знания/B.md", "---\ntitle: B\n---\nbeta body content for chunking");
+    const fetchSpy = mockEmbedder();
+    const cfg = embedConfig();
+    edb = openDatabase(cfg);
+
+    await indexAll({ db: edb, config: cfg, logger: noopLogger });
+
+    expect(countChunksWithoutEmbeddings(edb)).toBe(0);
+    expect(fetchSpy).toHaveBeenCalled();
+  });
+
+  it("embedMissingChunks fills deferred embeddings, then is a no-op (restart-safe)", async () => {
+    writeNote("01_Знания/C.md", "---\ntitle: C\n---\ngamma body content for chunking");
+    mockEmbedder();
+    const cfg = embedConfig();
+    edb = openDatabase(cfg);
+    await indexAll({ db: edb, config: cfg, logger: noopLogger, embed: false });
+
+    const pending = countChunksWithoutEmbeddings(edb);
+    expect(pending).toBeGreaterThan(0);
+
+    const n = await embedMissingChunks({ db: edb, config: cfg, logger: noopLogger });
+    expect(n).toBe(pending);
+    expect(countChunksWithoutEmbeddings(edb)).toBe(0);
+
+    // re-run resumes from "what's still missing" → nothing to do
+    const n2 = await embedMissingChunks({ db: edb, config: cfg, logger: noopLogger });
+    expect(n2).toBe(0);
+  });
+
+  it("embedMissingChunks honours shouldStop — bails before touching the embedder", async () => {
+    writeNote("01_Знания/D.md", "---\ntitle: D\n---\ndelta body content for chunking");
+    const fetchSpy = mockEmbedder();
+    const cfg = embedConfig();
+    edb = openDatabase(cfg);
+    await indexAll({ db: edb, config: cfg, logger: noopLogger, embed: false });
+
+    const before = countChunksWithoutEmbeddings(edb);
+    const n = await embedMissingChunks({
+      db: edb,
+      config: cfg,
+      logger: noopLogger,
+      shouldStop: () => true,
+    });
+
+    expect(n).toBe(0);
+    expect(countChunksWithoutEmbeddings(edb)).toBe(before); // unchanged
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

@@ -40,9 +40,10 @@ import {
   checkEmbeddingModelChanged,
   checkParserChanged,
   backfillVecChunks,
+  countChunksWithoutEmbeddings,
   type CoreDb,
 } from "./db.js";
-import { indexAll } from "./indexer.js";
+import { indexAll, embedMissingChunks } from "./indexer.js";
 import { PARSER_VERSION } from "./parser.js";
 import { runSearch, runGraph, runMap } from "./mcp-tools.js";
 import { runDedup } from "./search.js";
@@ -728,14 +729,24 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
   // them). `migrateVecDimension` rebuilds vec_chunks when the embedder's
   // output width changed, else a stale dimension crash-loops every embedding
   // INSERT. Then, BEFORE indexAll repopulates: a model swap nulls stale
-  // embeddings and a PARSER_VERSION bump nulls content_hash to force a reparse;
-  // indexAll's parse+embed pass rebuilds both. All are no-ops when nothing
-  // changed (and embedding checks no-op entirely when vectors are off).
+  // embeddings and a PARSER_VERSION bump nulls content_hash to force a reparse.
+  // All are no-ops when nothing changed (and embedding checks no-op entirely
+  // when vectors are off).
+  //
+  // Serve-first: indexAll runs STRUCTURAL-ONLY here (`embed: false`) — parse /
+  // chunk / upsert / wikilink-resolve, everything BM25/FTS5 serving needs —
+  // and the network-bound embed pass is deferred to a background task kicked
+  // off below, once the MCP port + heartbeat are up. On a model swap or
+  // PARSER_VERSION bump that invalidation re-embeds the WHOLE vault (minutes on
+  // a large vault); doing it inline would keep the port closed and the
+  // heartbeat stale that whole time — an availability hole for a rolling fleet
+  // update. While the backfill catches up, search degrades to BM25-only for
+  // not-yet-embedded chunks (search.ts graceful degradation) and gains vectors
+  // as they fill in.
   const db = openDatabase(config, { migrateVecDimension: true });
   checkEmbeddingModelChanged(db, config.embedding);
   checkParserChanged(db, PARSER_VERSION);
-  await indexAll({ db, config, logger });
-  if (db.vecAvailable) backfillVecChunks(db);
+  await indexAll({ db, config, logger, embed: false });
 
   // Baseline (каденция): канон + оперативка
   // копятся и уходят ПАЧКОЙ раз в batch.curatorMs (default 6h, CURATOR_TICK).
@@ -1316,6 +1327,35 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
     mcp = await startMcpHttp({ db, config, port: opts.mcpPort ?? config.mcp.port, logger });
   }
 
+  // ── background embedding backfill (serve-first) ──
+  // The structural index is already live (BM25/FTS5 serving, port open,
+  // heartbeat ticking). The embed pass — deferred from startup above — now runs
+  // off the critical path: re-embed of NULL-embedding chunks, then mirror into
+  // vec_chunks. Both passes are restart-safe (re-query what's still missing),
+  // so a shutdown mid-backfill simply resumes next start. `backfillStopping`
+  // lets close() bail the loop promptly. Errors are logged, never fatal — a
+  // degraded (BM25-only) daemon beats a crashed one.
+  let backfillStopping = false;
+  const backfillTask: Promise<void> = (async () => {
+    if (!config.embedding) return;
+    try {
+      const pending = countChunksWithoutEmbeddings(db);
+      if (pending > 0) {
+        logger.info(`iapeer-memory: background embed backfill — ${pending} chunk(s) pending`);
+      }
+      await embedMissingChunks({ db, config, logger, shouldStop: () => backfillStopping });
+      if (!backfillStopping && db.vecAvailable) {
+        backfillVecChunks(db, 200, () => backfillStopping);
+      }
+      if (pending > 0 && !backfillStopping) {
+        logger.info("iapeer-memory: background embed backfill complete");
+      }
+    } catch (err) {
+      logger.error(`iapeer-memory: background embed backfill failed: ${String(err)}`);
+    }
+  })();
+  backfillTask.catch(() => {}); // unhandled-rejection guard (errors handled within)
+
   logger.info(
     `memoryd up: vault=${config.vaultPath}, watch=${watcher ? "on" : "OFF"}, mcp=${mcp ? mcp.port : "disabled"}`,
   );
@@ -1333,6 +1373,8 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
     },
     close: async () => {
       watcher?.close();
+      backfillStopping = true; // bail the background embed loop at its next batch
+      await backfillTask; // batches are atomic — await ensures no torn write
       if (flushTimer) clearTimeout(flushTimer);
       clearInterval(heartbeatTimer);
       clearInterval(curatorTimer);

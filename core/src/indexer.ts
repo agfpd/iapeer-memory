@@ -11,6 +11,16 @@ export async function indexAll(params: {
   db: CoreDb;
   config: CoreConfig;
   logger: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
+  /**
+   * Run the embedding pass inline (default `true`). The structural work
+   * (parse / chunk / upsert / wikilink-resolve) — everything BM25/FTS5 serving
+   * needs — always runs synchronously; only the network-bound embed pass is
+   * gated. memoryd passes `false` at startup so the MCP port + heartbeat come
+   * up at once and the (potentially whole-vault) re-embed runs in the
+   * background. Incremental callers and the CLI keep the default so a changed
+   * note's vector is ready promptly.
+   */
+  embed?: boolean;
 }): Promise<Map<string, string[]>> {
   const { db, config, logger } = params;
   const seenPaths = new Set<string>();
@@ -37,8 +47,9 @@ export async function indexAll(params: {
   // Resolve wikilinks: map note titles to actual file paths
   resolveWikilinks(db, titleToPath);
 
-  // Embed chunks that don't have embeddings yet
-  if (config.embedding) {
+  // Embed chunks that don't have embeddings yet (unless deferred to a
+  // background pass — see the `embed` option above).
+  if (config.embedding && params.embed !== false) {
     await embedMissingChunks({ db, config, logger });
   }
 
@@ -174,18 +185,32 @@ export function resolveWikilinks(
   tx();
 }
 
-async function embedMissingChunks(params: {
+/**
+ * Embed every chunk whose `embedding` column is still NULL, batch by batch.
+ *
+ * Restart-safe and re-entrant by construction: each loop re-queries
+ * `getChunksWithoutEmbeddings`, so an interrupted pass (crash, shutdown) simply
+ * resumes from the remaining NULL-embedding chunks on the next call — already
+ * embedded chunks are never re-embedded. Returns the count embedded this call.
+ *
+ * `shouldStop` is a cooperative cancellation hook checked before each batch, so
+ * memoryd's background backfill can bail promptly on shutdown without leaving a
+ * half-written batch (each batch's store is atomic).
+ */
+export async function embedMissingChunks(params: {
   db: CoreDb;
   config: CoreConfig;
   logger: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
-}): Promise<void> {
-  const { db, config, logger } = params;
-  if (!config.embedding) return;
+  shouldStop?: () => boolean;
+}): Promise<number> {
+  const { db, config, logger, shouldStop } = params;
+  if (!config.embedding) return 0;
 
   const batchSize = config.embedding.batchSize;
   let total = 0;
 
   while (true) {
+    if (shouldStop?.()) break;
     const missing = getChunksWithoutEmbeddings(db, batchSize);
     if (missing.length === 0) break;
 
@@ -211,6 +236,7 @@ async function embedMissingChunks(params: {
   if (total > 0) {
     logger.info(`iapeer-memory: embedded ${total} chunks`);
   }
+  return total;
 }
 
 type ScanRootParams = {

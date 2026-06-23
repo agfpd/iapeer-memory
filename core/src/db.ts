@@ -261,8 +261,18 @@ export function checkEmbeddingModelChanged(db: CoreDb, config: { model: string; 
 
   if (stored === fingerprint) return false;
 
-  // Model changed (or first run) — clear all embeddings
+  // Model changed (or first run) — every stored vector is now invalid. Clear
+  // BOTH the chunks.embedding column AND the vec_chunks mirror. The mirror
+  // matters for memoryd's serve-first startup (the MCP port opens before the
+  // background re-embed finishes): a SAME-dimension model swap does not trigger
+  // migrateVecDimension's table drop, so without this the old model's vectors
+  // would linger in vec_chunks and be searched against a new-model query
+  // embedding — semantic noise. Clearing them degrades the backfill window
+  // cleanly to BM25-only instead. (Dimension CHANGES are already handled by
+  // migrateVecDimension dropping the table; on first run vec_chunks is empty,
+  // so this is a no-op.)
   db.prepare("UPDATE chunks SET embedding = NULL").run();
+  if (db.vecAvailable) db.prepare("DELETE FROM vec_chunks").run();
   setMeta(db, "embedding_fingerprint", fingerprint);
 
   return stored !== null; // true = invalidated old embeddings, false = first run
@@ -495,6 +505,13 @@ export function getChunksWithoutEmbeddings(db: CoreDb, limit: number): Array<{ i
   ).all(limit) as Array<{ id: number; docPath: string; chunkText: string }>;
 }
 
+/** How many chunks still lack an embedding — the pending size of a (re-)embed
+ *  pass, used by memoryd to log background-backfill progress. */
+export function countChunksWithoutEmbeddings(db: CoreDb): number {
+  const row = db.prepare("SELECT COUNT(*) AS n FROM chunks WHERE embedding IS NULL").get() as { n: number };
+  return row.n;
+}
+
 export function storeChunkEmbeddings(db: CoreDb, updates: Array<{ id: number; embedding: Buffer }>): void {
   const stmt = db.prepare("UPDATE chunks SET embedding = ? WHERE id = ?");
   // vec_chunks mirrors the same buffer keyed by rowid == chunks.id. INSERT OR
@@ -524,7 +541,7 @@ export function storeChunkEmbeddings(db: CoreDb, updates: Array<{ id: number; em
  * just produces zero work via INSERT OR REPLACE. Streams in batches to keep
  * heap bounded — full vault has ~1500 chunks × 16KB embedding = ~24 MB.
  */
-export function backfillVecChunks(db: CoreDb, batchSize = 200): number {
+export function backfillVecChunks(db: CoreDb, batchSize = 200, shouldStop?: () => boolean): number {
   if (!db.vecAvailable) return 0;
   // Only chunks NOT already in vec_chunks. NOT EXISTS lets sqlite skip the
   // join when vec_chunks is fully populated.
@@ -540,6 +557,7 @@ export function backfillVecChunks(db: CoreDb, batchSize = 200): number {
   );
   let total = 0;
   while (true) {
+    if (shouldStop?.()) break;
     const rows = selectMissing.all(batchSize) as Array<{ id: number; embedding: Buffer }>;
     if (rows.length === 0) break;
     const tx = db.transaction(() => {
