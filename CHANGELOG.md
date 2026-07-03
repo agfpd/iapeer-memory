@@ -17,6 +17,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   README no longer calls the per-peer session surfaces "plugins", and the
   Russian integration doc gained parity for the pre-v1.2 manual-migration note.
 
+## [0.4.10] - 2026-07-03
+
+Remediation phase 3 (audit 2026-07-02): eight important findings across the
+CLI facade and the docs contract. This release closes the self-repair loop
+end to end — the class behind the 12h overnight memoryd hang.
+
+### Fixed
+
+- **Self-repair kick in the compiled binary**: the session-start hook
+  spawned `<binary> /$bunfs/…/cli.ts verify --repair` → «unknown command» —
+  the ADR-010 self-repair NEVER ran in production while the hook reported
+  «Kicked … in the background». The kick now branches on the compiled
+  runtime.
+- **`verify --repair` terminates a hung memoryd**: a stale heartbeat under
+  `--repair` now SIGTERMs the command-line-verified daemon, escalates to
+  SIGKILL after a 5 s grace (a deadlocked event loop never runs its SIGTERM
+  handler), removes the pid file only after confirmed death, and lets the
+  notifier's exit-detection relaunch — the watcher.ts «no gap» contract was
+  documented but unimplemented.
+- **Stale dream timer with the role OFF** is now a FAIL (was: a masking
+  skip), and `--repair` unregisters it, as docs/11 always promised.
+- **Re-init split-brain guard**: `init --vault` pointing away from the vault
+  the host runs with refuses loudly (doctrines/guide would re-point while
+  config.env/memoryd stayed — peers would write into a vault nobody
+  indexes); the interactive prompt now defaults to the current vault.
+- **`IAPEER_MEMORY_DREAM_TRANSCRIPT_CAP=0`** now means «no cap» as
+  documented.
+- **Release pipeline**: the working-tree cleanliness gate moved to
+  `preversion` — `git add -A` can no longer launder uncommitted changes into
+  the release commit and the npm tarballs.
+- **`migrate` dry-run** now lists non-md files that `--apply` removes from
+  the source (backup-only) — the confirmed plan equals the applied mutation.
+- **Docs (EN+RU 03/08/11)**: `needs_review` prose now matches the code —
+  every non-curator write sets the flag; the flag is the curation queue.
+
 ## [0.4.9] - 2026-07-03
 
 Remediation phase 2 (audit 2026-07-02): the six important findings in the
