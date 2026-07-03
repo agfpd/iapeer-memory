@@ -17,6 +17,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   README no longer calls the per-peer session surfaces "plugins", and the
   Russian integration doc gained parity for the pre-v1.2 manual-migration note.
 
+## [0.4.15] - 2026-07-03
+
+Remediation phase 8 (audit 2026-07-02): the render/surface layer — the LAST
+of the 43 important findings. With this release every critical and
+important finding of the audit is fixed.
+
+### Fixed
+
+- **Doctrines always carry the host fact**: the manual `render doctrine`
+  path rendered `{{VAULT_PATH}}` as a placeholder while stamping the
+  current version, and verify's marker-only check read the crippled
+  doctrine as «ok» forever. `render doctrine` resolves the vault the same
+  way update/init/verify do, and verify now detects the placeholder text.
+- **The provision lock is OWNED**: an owner token (pid + nonce) inside the
+  lock dir; stale-breaking requires a confirmed-dead owner (ps probe) —
+  an age-only break used to tear the lock from a live holder mid-sweep
+  (racing read-merge-writes of the same settings.json); release only
+  removes the holder's own lock (the third-writer cascade is closed);
+  trust-hooks spawns under the lock are bounded (30 s).
+- **Unique tmp names** for fleet.json and surface writes: concurrent
+  verify --repair runs shared one `.tmp` — a torn fleet map (fragment
+  rendering silently off) or an ENOENT crash of the losing writer.
+- **Path-ladder symmetry**: tagsProjectionPath is passed into startMemoryd —
+  under an `IAPEER_MEMORY_DB_PATH` override the repair-path
+  `render fragment` silently rendered fragments without the tags
+  dictionary.
+- **bytes-compared renders**: atomicWrite/writeFragmentAtomic skip
+  identical content — every debounced flush used to rewrite 3×N fleet
+  files with unchanged bytes (mtime churn across every peer's surfaces).
+
 ## [0.4.14] - 2026-07-03
 
 Remediation phase 7 (audit 2026-07-02): the curation belts and the sandbox
