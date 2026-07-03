@@ -100,18 +100,48 @@ function buildRequestBody(batch: string[], config: EmbeddingConfig): unknown {
   }
 }
 
-/** Parse one response into vectors, or null when the shape is wrong. */
-function parseResponse(json: unknown, config: EmbeddingConfig): Float32Array[] | null {
+/**
+ * Parse one response into vectors, or null when the shape is wrong.
+ *
+ * VALIDATED, not trusted (audit important): the raw `data.map(new
+ * Float32Array(item.embedding))` accepted any shape — a short response gave
+ * `undefined` vectors (TypeError downstream), a missing `embedding` field
+ * became a 0-length vector stored as non-NULL (never re-embedded, NaN in
+ * cosine), a server-side model swap to another dimensionality crashed every
+ * vec insert forever, and out-of-order rows would bind chunk A's text to
+ * chunk B's vector silently. Checks: row count == batch length, every vector
+ * matches config.dimensions, openai rows sorted by their `index` field when
+ * present (the spec does not guarantee order — that's what `index` is for).
+ * Any mismatch → null → the caller's existing graceful error path.
+ */
+function parseResponse(
+  json: unknown,
+  config: EmbeddingConfig,
+  batchLength: number,
+): Float32Array[] | null {
   const provider = config.provider ?? "openai";
   try {
+    let rows: unknown[];
     if (provider === "openai") {
-      const data = (json as { data: Array<{ embedding: number[] }> }).data;
-      return data.map((item) => new Float32Array(item.embedding));
+      const data = (json as { data?: Array<{ embedding?: unknown; index?: unknown }> }).data;
+      if (!Array.isArray(data) || data.length !== batchLength) return null;
+      const ordered = data.every((item) => typeof item?.index === "number")
+        ? [...data].sort((a, b) => (a.index as number) - (b.index as number))
+        : data;
+      rows = ordered.map((item) => item?.embedding);
+    } else {
+      // tei: a bare array of float arrays
+      if (!Array.isArray(json) || json.length !== batchLength) return null;
+      rows = json as unknown[];
     }
-    // tei: a bare array of float arrays
-    const rows = json as number[][];
-    if (!Array.isArray(rows)) return null;
-    return rows.map((row) => new Float32Array(row));
+    const out: Float32Array[] = [];
+    for (const row of rows) {
+      if (!Array.isArray(row)) return null;
+      const vector = new Float32Array(row as number[]);
+      if (vector.length !== config.dimensions) return null;
+      out.push(vector);
+    }
+    return out;
   } catch {
     return null;
   }
@@ -153,7 +183,7 @@ export async function embedTexts(
       return { vectors: null, status: result.status };
     }
 
-    const vectors = parseResponse(result.json, config);
+    const vectors = parseResponse(result.json, config, batch.length);
     if (vectors === null) {
       breaker.recordFailure();
       return { vectors: null, status: "error" };

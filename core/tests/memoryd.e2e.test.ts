@@ -975,3 +975,91 @@ describe("memoryd.e2e — flush does not drain the embed queue during backfill (
     }
   });
 });
+
+describe("memoryd.e2e — embed backfill retries after an endpoint outage (audit important)", () => {
+  it("a failed first pass retries on backoff WITHOUT a vault edit; «complete» only when the queue is empty", async () => {
+    const rtmp = fs.mkdtempSync(path.join(os.tmpdir(), "iapeer-memory-backfillretry-"));
+    const rvault = path.join(rtmp, "vault");
+    fs.mkdirSync(path.join(rvault, T.folders.knowledge), { recursive: true });
+    const dbPath = path.join(rtmp, "retry.db");
+    for (let i = 0; i < 2; i++) {
+      fs.writeFileSync(
+        path.join(rvault, T.folders.knowledge, `Р${i}.md`),
+        `---\ntitle: Р${i}\nauthor: boris\ntype: ${T.types.knowledge}\nstatus: ${T.statusTokens.current}\n---\n\nТело ${i}.\n`,
+        "utf-8",
+      );
+    }
+
+    let fetchCalls = 0;
+    const realFetch = globalThis.fetch;
+    // TEI races memoryd up after a reboot: the FIRST request is refused, the
+    // endpoint is alive by the time the retry fires.
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      fetchCalls++;
+      if (fetchCalls === 1) throw new Error("ECONNREFUSED");
+      const batch = (JSON.parse(String(init?.body)) as { input: string[] }).input;
+      return new Response(
+        JSON.stringify({ data: batch.map(() => ({ embedding: [0.1, 0.2, 0.3] })) }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    const logLines: string[] = [];
+    const logCapture = {
+      info: (m: string) => logLines.push(m),
+      warn: (m: string) => logLines.push(m),
+      error: (m: string) => logLines.push(m),
+    };
+
+    let h: MemorydHandle | null = null;
+    try {
+      h = await startMemoryd({
+        config: {
+          ...makeConfig(),
+          vaultPath: rvault,
+          index: { dbPath, fullScanOnStartup: true },
+          embedding: {
+            endpoint: "http://127.0.0.1:1/v1/embeddings",
+            model: "test-embedder",
+            dimensions: 3,
+            batchSize: 2,
+            apiKey: null,
+          },
+        },
+        emit: () => {},
+        mcpPort: null,
+        debounceMs: 60_000, // NO flush help — the retry loop must do it alone
+        backfillRetryMs: 150,
+        logger: logCapture,
+      });
+
+      // The old one-shot backfill would stop here forever (0 of N embedded,
+      // log lying «complete»). The retry loop drains without any vault edit.
+      let missing = -1;
+      for (let i = 0; i < 50 && missing !== 0; i++) {
+        await sleep(100);
+        const sq = new Database(dbPath, { readonly: true });
+        try {
+          missing = (
+            sq.prepare("SELECT COUNT(*) AS n FROM chunks WHERE embedding IS NULL").get() as {
+              n: number;
+            }
+          ).n;
+        } finally {
+          sq.close();
+        }
+      }
+      expect(missing).toBe(0);
+      expect(fetchCalls).toBeGreaterThanOrEqual(2); // failed once, then drained
+
+      const stalledAt = logLines.findIndex((l) => l.includes("stalled"));
+      const completeAt = logLines.findIndex((l) => l.includes("backfill complete"));
+      expect(stalledAt).toBeGreaterThan(-1); // honest stall report…
+      expect(completeAt).toBeGreaterThan(stalledAt); // …and «complete» only AFTER the real drain
+    } finally {
+      globalThis.fetch = realFetch;
+      if (h) await h.close();
+      fs.rmSync(rtmp, { recursive: true, force: true });
+    }
+  });
+});

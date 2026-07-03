@@ -105,16 +105,89 @@ describe("embedTexts — happy path", () => {
   });
 
   it("batches input according to config.batchSize (multiple fetch calls)", async () => {
-    // 33 texts с batchSize=10 → 4 batch'а (10+10+10+3).
+    // 33 texts с batchSize=10 → 4 batch'а (10+10+10+3). Мок отвечает на
+    // КАЖДЫЙ запрос правильным числом векторов — валидация ответа теперь
+    // отбрасывает несоответствие количества (audit important).
     const spy = vi.spyOn(
-    globalThis as unknown as { fetch: (...args: unknown[]) => Promise<Response> },
+    globalThis as unknown as { fetch: (url: unknown, init?: RequestInit) => Promise<Response> },
     "fetch",
-  ).mockImplementation(async () =>
-      mockEmbeddingResponse([[0, 0, 0]]),
-    );
+  ).mockImplementation(async (_url: unknown, init?: RequestInit) => {
+      const batch = (JSON.parse(String(init?.body)) as { input: string[] }).input;
+      return mockEmbeddingResponse(batch.map(() => [0, 0, 0]));
+    });
     const texts = Array.from({ length: 33 }, (_, i) => `t${i}`);
-    await embedTexts(texts, makeConfig({ batchSize: 10 }));
+    const result = await embedTexts(texts, makeConfig({ batchSize: 10 }));
+    expect(result.status).toBe("ok");
+    expect(result.vectors).toHaveLength(33);
     expect(spy).toHaveBeenCalledTimes(4);
+  });
+
+  it("response validation (audit important): count / dimension / order / shape", async () => {
+    // count mismatch → error, not a downstream TypeError
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(mockEmbeddingResponse([[1, 2, 3]]));
+    let r = await embedTexts(["a", "b"], makeConfig());
+    expect(r.status).toBe("error");
+    vi.restoreAllMocks();
+    _resetEmbeddingCircuitForTests();
+
+    // dimension mismatch (server-side model swap) → error, not a poisoned store
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(mockEmbeddingResponse([[1, 2, 3, 4]]));
+    r = await embedTexts(["a"], makeConfig()); // dimensions: 3
+    expect(r.status).toBe("error");
+    vi.restoreAllMocks();
+    _resetEmbeddingCircuitForTests();
+
+    // missing embedding field → error, never a 0-length vector
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ index: 0 }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    r = await embedTexts(["a"], makeConfig());
+    expect(r.status).toBe("error");
+    vi.restoreAllMocks();
+    _resetEmbeddingCircuitForTests();
+
+    // out-of-order rows are re-bound by their index field (OpenAI spec)
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            { index: 1, embedding: [2, 2, 2] },
+            { index: 0, embedding: [1, 1, 1] },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    r = await embedTexts(["первый", "второй"], makeConfig());
+    expect(r.status).toBe("ok");
+    expect(Array.from(r.vectors![0]!)).toEqual([1, 1, 1]); // первый ← index 0
+    expect(Array.from(r.vectors![1]!)).toEqual([2, 2, 2]);
+  });
+
+  it("TEI responses get the same count/dimension validation", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify([[1, 2, 3]]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    // count mismatch
+    let r = await embedTexts(["a", "b"], makeConfig({ provider: "tei" }));
+    expect(r.status).toBe("error");
+    vi.restoreAllMocks();
+    _resetEmbeddingCircuitForTests();
+    // happy path
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify([[1, 2, 3]]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    r = await embedTexts(["a"], makeConfig({ provider: "tei" }));
+    expect(r.status).toBe("ok");
   });
 });
 

@@ -668,6 +668,9 @@ export type MemorydOptions = {
   /** Start WITHOUT fs.watch — the degraded polling contour from tick one.
    *  Diagnostic/test lever for the watch-loss path; production never sets it. */
   disableWatch?: boolean;
+  /** Base backoff of the embed-backfill retry loop, ms. Default 60s (≥ the
+   *  breaker cooldown); exponential ×5 up to a 15 min cap. Test lever. */
+  backfillRetryMs?: number;
   /**
    * MCP http port (0 = ephemeral). Pass null to disable the endpoint;
    * omit to use `config.mcp.port` (the configured default, ADR-012).
@@ -1627,19 +1630,57 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
   // lets close() bail the loop promptly. Errors are logged, never fatal — a
   // degraded (BM25-only) daemon beats a crashed one.
   let backfillStopping = false;
+  /** Wakes a backoff sleep early so close() never waits out a retry window. */
+  let backfillWake: (() => void) | null = null;
+  const backfillSleep = (ms: number): Promise<void> =>
+    new Promise((resolve) => {
+      const t = setTimeout(() => {
+        backfillWake = null;
+        resolve();
+      }, ms);
+      t.unref?.();
+      backfillWake = () => {
+        clearTimeout(t);
+        backfillWake = null;
+        resolve();
+      };
+    });
+  const backfillRetryBaseMs = opts.backfillRetryMs ?? 60_000;
   const backfillTask: Promise<void> = (async () => {
     if (!config.embedding) return;
     try {
-      const pending = countChunksWithoutEmbeddings(db);
-      if (pending > 0) {
-        logger.info(`iapeer-memory: background embed backfill — ${pending} chunk(s) pending`);
+      const initial = countChunksWithoutEmbeddings(db);
+      if (initial > 0) {
+        logger.info(`iapeer-memory: background embed backfill — ${initial} chunk(s) pending`);
       }
-      await embedMissingChunks({ db, config, logger, shouldStop: () => backfillStopping });
-      if (!backfillStopping && db.vecAvailable) {
-        backfillVecChunks(db, 200, () => backfillStopping);
-      }
-      if (pending > 0 && !backfillStopping) {
-        logger.info("iapeer-memory: background embed backfill complete");
+      // RETRY LOOP (audit important: the one-shot pass died on the first
+      // endpoint failure — memoryd racing TEI up after a reboot left the
+      // whole vault BM25-only until the next vault edit, while the log said
+      // «backfill complete»). Exponential backoff, base ≥ the breaker
+      // cooldown so a retry never lands inside circuit-open for nothing;
+      // the sleep is cancellable — close() wakes it and the loop exits on
+      // backfillStopping.
+      let backoffMs = backfillRetryBaseMs;
+      while (!backfillStopping) {
+        await embedMissingChunks({ db, config, logger, shouldStop: () => backfillStopping });
+        if (backfillStopping) break;
+        const remaining = countChunksWithoutEmbeddings(db);
+        if (remaining === 0) {
+          if (db.vecAvailable) {
+            await backfillVecChunks(db, 200, () => backfillStopping);
+          }
+          if (initial > 0) {
+            // «complete» ONLY when the queue is actually empty — the old
+            // unconditional line masked a 0-of-N failure as success.
+            logger.info("iapeer-memory: background embed backfill complete");
+          }
+          break;
+        }
+        logger.warn(
+          `iapeer-memory: embed backfill stalled — ${remaining} chunk(s) still pending, retry in ${Math.round(backoffMs / 1000)}s`,
+        );
+        await backfillSleep(backoffMs);
+        backoffMs = Math.min(backoffMs * 5, 15 * 60_000);
       }
     } catch (err) {
       logger.error(`iapeer-memory: background embed backfill failed: ${String(err)}`);
@@ -1673,6 +1714,7 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
       watcher?.close();
       if (pollTimer) clearInterval(pollTimer);
       backfillStopping = true; // bail the background embed loop at its next batch
+      backfillWake?.(); // …and never wait out a retry-backoff window
       await backfillTask; // batches are atomic — await ensures no torn write
       if (flushTimer) clearTimeout(flushTimer);
       if (retryTimer) clearTimeout(retryTimer);

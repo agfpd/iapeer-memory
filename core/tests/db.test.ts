@@ -842,3 +842,41 @@ describe("vec_chunks orphan protection (backfill ↔ reindex race, audit critica
     expect(gcOrphanVecChunks(db)).toBe(0);
   });
 });
+
+describe("deferred vec invalidation (audit important: model swap while vec is down)", () => {
+  it("a fingerprint change WITHOUT vec arms the durable stale flag", () => {
+    // the beforeEach db has no vec (embedding: null config) → vecAvailable false
+    setMeta(db, "embedding_fingerprint", "old-model:4");
+    const invalidated = checkEmbeddingModelChanged(db, { model: "new-model", dimensions: 4 });
+    expect(invalidated).toBe(true);
+    expect(getMeta(db, "vec_chunks_stale")).toBe("1");
+  });
+
+  it("first run without vec does NOT arm the flag (no mirror to clear)", () => {
+    checkEmbeddingModelChanged(db, { model: "m", dimensions: 4 });
+    expect(getMeta(db, "vec_chunks_stale")).toBeNull();
+  });
+
+  it.skipIf(!VEC_AVAILABLE)(
+    "the first vec-capable start clears the poisoned mirror and drops the flag",
+    () => {
+      const p = path.join(tmpDir, "vec-stale.db");
+      const h = openDatabase(makeConfigWithEmbedding(p, 4), { migrateVecDimension: true });
+      // Simulate the boot-B aftermath: old-model vectors in the mirror + the
+      // armed flag (the swap happened while vec was down), fingerprint
+      // already at the NEW model — the change branch will not fire again.
+      insertOneEmbedding(h, "e.md", "h1", [1, 2, 3, 4]);
+      setMeta(h, "vec_chunks_stale", "1");
+      setMeta(h, "embedding_fingerprint", "new-model:4");
+      expect(vecRowCount(h)).toBe(1);
+
+      const invalidated = checkEmbeddingModelChanged(h, { model: "new-model", dimensions: 4 });
+      expect(invalidated).toBe(false); // fingerprint unchanged — no re-null of chunks
+      expect(vecRowCount(h)).toBe(0); // but the stale mirror is GONE
+      expect(getMeta(h, "vec_chunks_stale")).toBeNull();
+      // chunks.embedding survived — backfillVecChunks re-mirrors from it
+      expect(getChunksWithoutEmbeddings(h, 10)).toHaveLength(0);
+      h.close();
+    },
+  );
+});

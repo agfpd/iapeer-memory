@@ -267,6 +267,19 @@ export function setMeta(db: CoreDb, key: string, value: string): void {
 export function checkEmbeddingModelChanged(db: CoreDb, config: { model: string; dimensions: number } | null): boolean {
   if (!config) return false;
 
+  // Deferred vec invalidation (audit important): a model swap that happened
+  // while sqlite-vec was NOT loadable could not clear vec_chunks (a DELETE
+  // on a vec0 table needs the loaded module) — the old model's vectors would
+  // sit under LIVE rowids forever, answering new-model queries as permanent
+  // semantic noise (the NOT EXISTS backfill never overwrites them, and the
+  // fingerprint no longer changes). The durable meta flag survives restarts:
+  // the first vec-capable writer start performs the clear. Also sweeps the
+  // orphan rows that vec-less reindexes left behind in the same window.
+  if (db.vecAvailable && getMeta(db, "vec_chunks_stale") === "1") {
+    db.prepare("DELETE FROM vec_chunks").run();
+    db.prepare("DELETE FROM meta WHERE key = 'vec_chunks_stale'").run();
+  }
+
   const fingerprint = `${config.model}:${config.dimensions}`;
   const stored = getMeta(db, "embedding_fingerprint");
 
@@ -283,7 +296,13 @@ export function checkEmbeddingModelChanged(db: CoreDb, config: { model: string; 
   // migrateVecDimension dropping the table; on first run vec_chunks is empty,
   // so this is a no-op.)
   db.prepare("UPDATE chunks SET embedding = NULL").run();
-  if (db.vecAvailable) db.prepare("DELETE FROM vec_chunks").run();
+  if (db.vecAvailable) {
+    db.prepare("DELETE FROM vec_chunks").run();
+  } else if (stored !== null) {
+    // Can't clear the mirror now — arm the durable flag for the next
+    // vec-capable start (first run has no mirror to clear).
+    setMeta(db, "vec_chunks_stale", "1");
+  }
   setMeta(db, "embedding_fingerprint", fingerprint);
 
   return stored !== null; // true = invalidated old embeddings, false = first run
@@ -641,7 +660,7 @@ export function gcOrphanVecChunks(db: CoreDb): number {
  * just produces zero work via INSERT OR REPLACE. Streams in batches to keep
  * heap bounded — full vault has ~1500 chunks × 16KB embedding = ~24 MB.
  */
-export function backfillVecChunks(db: CoreDb, batchSize = 200, shouldStop?: () => boolean): number {
+export async function backfillVecChunks(db: CoreDb, batchSize = 200, shouldStop?: () => boolean): Promise<number> {
   if (!db.vecAvailable) return 0;
   // Only chunks NOT already in vec_chunks. NOT EXISTS lets sqlite skip the
   // join when vec_chunks is fully populated.
@@ -666,6 +685,10 @@ export function backfillVecChunks(db: CoreDb, batchSize = 200, shouldStop?: () =
     tx();
     total += rows.length;
     if (rows.length < batchSize) break;
+    // Yield between batches (audit cosmetic): a fully synchronous loop
+    // blocked the event loop — including the just-opened MCP port — for the
+    // entire mirroring pass, and shouldStop physically could not fire.
+    await new Promise((r) => setTimeout(r, 0));
   }
   return total;
 }
