@@ -17,6 +17,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   README no longer calls the per-peer session surfaces "plugins", and the
   Russian integration doc gained parity for the pre-v1.2 manual-migration note.
 
+## [0.4.9] - 2026-07-03
+
+Remediation phase 2 (audit 2026-07-02): the six important findings in the
+daemon's event loop and lifecycle.
+
+### Fixed
+
+- **Lost flush passes**: a vault-unavailable window or a pass error no longer
+  eats the changed set — the paths are re-queued and replayed on a
+  bounded-backoff retry timer.
+- **Shutdown flush**: `close()` now runs the documented final pass over a
+  non-empty pending set (structural-only; embeddings resume next start via
+  the restart-safe backfill) — a SIGTERM inside the debounce window no longer
+  drops just-made edits from the detect belts.
+- **Debounce max-wait cap** (default 10 × debounce): an event storm with
+  sub-debounce gaps (iCloud sync, bulk migration) can no longer defer
+  indexing for the whole storm.
+- **Single-writer lock**: a second memoryd on the same vault/DB now refuses
+  at startup (O_EXCL lock + owner liveness via the egress `ps` probe, or
+  lock-mtime staleness for bare-core callers) instead of racing the first
+  writer's tmp files and SQLite; the pid file is written only after a
+  successful start, so a refused second instance no longer clobbers the live
+  instance's stop handle.
+- **Backfill dedup**: while the background embed backfill drains the global
+  queue, a flush indexes structurally only — no inline drain of the whole
+  backlog on a single edit, no double-embedding.
+- **Stamp persistence cadence**: silent-edit baselines persist on the same
+  60 s change-gated cadence as the hash state (was: curator tick / graceful
+  close only), so a non-graceful death loses seconds, not hours, of stamps.
+
 ## [0.4.8] - 2026-07-03
 
 Remediation phase 1 of the 2026-07-02 full-codebase audit: all seven
