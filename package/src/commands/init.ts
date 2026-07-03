@@ -48,6 +48,7 @@ import {
   doctrineOwnership,
   guideText,
   materialiseTemplates,
+  roleDescription,
   rolePersonality,
   roleTemplatePath,
   ROLE_NAMES,
@@ -126,7 +127,12 @@ function parseFlags(argv: string[]): InitFlags | null {
 
 // ── iapeer registry helpers ──────────────────────────────────────────────────
 
-type PeerInfo = { personality: string; intelligence?: string; cwd?: string };
+type PeerInfo = {
+  personality: string;
+  intelligence?: string;
+  cwd?: string;
+  description?: string;
+};
 
 type RunResult = { exitCode: number; stdout: string; stderr: string };
 
@@ -386,8 +392,14 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
         // Thread the host runtime through create (onboard's detected runtime) —
         // the peer is DECLARED with it, and watcher/timer later register from the
         // same declaration (step 7). Absent → core resolves its own default.
+        // The role description is born WITH the peer (В36: create threads it into
+        // the local profile + registry) — a role peer must never sit nameless in
+        // `iapeer list`. `create --description` exists since iapeer's initial
+        // public release (fact: git log -S over src/create/index.ts) — no
+        // version gate needed.
         const createArgs = [flags.iapeerBin ?? IAPEER_BIN, "create", personality];
         if (flagRuntime) createArgs.push("--runtime", flagRuntime);
+        createArgs.push("--description", roleDescription(locale, role));
         const created = run(egress, createArgs, { explicitBin: flags.iapeerBin !== undefined });
         if (created.exitCode !== 0) {
           rolesOk = false;
@@ -423,7 +435,8 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
       const freshPeers = createdAny ? listPeers(egress, flags.iapeerBin) : peers;
       for (const role of ROLE_NAMES) {
         const personality = rolePersonality(role);
-        const registryCwd = (freshPeers ?? []).find((p) => p.personality === personality)?.cwd;
+        const registryRec = (freshPeers ?? []).find((p) => p.personality === personality);
+        const registryCwd = registryRec?.cwd;
         const peerCwd = registryCwd || path.join(iapeerDir, "peers", personality);
         // COLLISION GUARD («index» уже бывал занят живым Индексом
         // предшественника; бренд-имена ролей — by decision, защита
@@ -439,6 +452,35 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
               `or move its cwd, then re-run init`,
           );
           continue;
+        }
+        // DESCRIPTION BACKFILL: a role peer that pre-exists with an EMPTY
+        // registry description (created by a pre-0.4.17 init, which passed no
+        // --description; regen preserved the emptiness) gets the canonical role
+        // description re-asserted via the core's sanctioned re-provision verb —
+        // `iapeer create` on an existing peer updates the local profile AND the
+        // registry row (В36), doctrine untouched (no-clobber). Runs ONLY on
+        // empty: an operator-tuned description is never overwritten. Guarded by
+        // the foreign-doctrine check above — a hijacked personality is never
+        // re-described.
+        if (registryRec && !(registryRec.description ?? "").trim()) {
+          const describeArgs = [
+            flags.iapeerBin ?? IAPEER_BIN,
+            "create",
+            personality,
+            "--path",
+            peerCwd,
+            "--description",
+            roleDescription(locale, role),
+          ];
+          const described = run(egress, describeArgs, {
+            explicitBin: flags.iapeerBin !== undefined,
+          });
+          if (described.exitCode !== 0) {
+            rolesOk = false;
+            console.log(
+              `      roles       ${personality}: description backfill failed: ${described.stderr.trim()}`,
+            );
+          }
         }
         const template = roleTemplatePath(paths.templatesDir, locale, role);
         const rendered = renderDoctrine({ templatePath: template, peerCwd, version, vaultPath: vault });

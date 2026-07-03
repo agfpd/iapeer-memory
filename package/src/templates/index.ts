@@ -92,6 +92,47 @@ const ROLES: Record<LocaleId, Record<RoleName, string>> = {
 
 const GUIDES: Record<LocaleId, string> = { en: GUIDE_EN, ru: GUIDE_RU };
 
+/**
+ * Registry `description` of a role peer — ONE sentence per role, derived
+ * from the doctrine header. It lands in `iapeer list`, fleet indexes and
+ * every peer's system prompt (core clamps at 450 chars), so a reader of
+ * the list understands the role without opening the doctrine. Source of
+ * truth for BOTH provisioning paths: init (`iapeer create --description`)
+ * and `verify --repair` (re-assert on an empty registry description).
+ */
+const ROLE_DESCRIPTIONS: Record<LocaleId, Record<RoleName, string>> = {
+  en: {
+    index:
+      "Index — curator of the shared memory's structure (iapeer-memory): " +
+      "links, tags, frontmatter, vault graph health; never touches note content.",
+    scriber:
+      "Scriber — ephemeral shared-memory worker (iapeer-memory): vets and " +
+      "polishes already-placed canon notes — style and fact-check, on the " +
+      "curation cadence or on demand.",
+    dreamweaver:
+      "DreamWeaver — ephemeral shared-memory worker (iapeer-memory): " +
+      "orchestrates the weekly sleep-cycle hygiene tick over agents' " +
+      "operative memory (DREAM_TICK).",
+  },
+  ru: {
+    index:
+      "Индекс — куратор структуры общей памяти (iapeer-memory): связи, теги, " +
+      "frontmatter, здоровье графа vault; содержимое заметок не трогает.",
+    scriber:
+      "Scriber — эфемерный воркер общей памяти (iapeer-memory): вычитка и " +
+      "оформление уже размещённых канон-заметок — стиль и фактчек, по " +
+      "каденции курации или разовым вызовом.",
+    dreamweaver:
+      "DreamWeaver — эфемерный воркер общей памяти (iapeer-memory): " +
+      "оркестрирует еженедельный sleep-cycle тик гигиены оперативки агентов " +
+      "(DREAM_TICK).",
+  },
+};
+
+export function roleDescription(locale: LocaleId, role: RoleName): string {
+  return ROLE_DESCRIPTIONS[locale][role];
+}
+
 export function roleDoctrineTemplate(locale: LocaleId, role: RoleName): string {
   return ROLES[locale][role];
 }

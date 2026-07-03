@@ -207,6 +207,9 @@ describe("init (local half, sandboxed)", () => {
     // role peers created WITH the host runtime — not the core's both→claude default
     expect(calls).toContain("create index --runtime codex");
     expect(calls).toContain("create scriber --runtime codex");
+    // …and BORN with the canonical role description (В36) — never nameless in `iapeer list`
+    expect(calls).toContain("create index --runtime codex --description ");
+    expect(calls).toContain("create dreamweaver --runtime codex --description ");
     // ONE runtime end-to-end: the flag also drives the watcher identity directly
     // (no registry round-trip needed), and NEVER the old hardcoded claude-index
     expect(calls).toContain("send watcher --from codex-index");
@@ -234,6 +237,36 @@ describe("init (local half, sandboxed)", () => {
     const calls = fs.readFileSync(capture, "utf-8");
     expect(calls).toContain("send watcher --from codex-index");
     expect(calls).not.toContain("--from claude-index");
+  });
+
+  it("role peer pre-existing with an EMPTY registry description → init backfills via `create --path --description` (В36 re-provision)", () => {
+    // index EXISTS in the registry but is nameless (created by a pre-0.4.17
+    // init); scriber/dreamweaver are absent and get born with a description.
+    const peerCwd = path.join(tmp, "peer-index");
+    fs.mkdirSync(peerCwd, { recursive: true });
+    const capture = path.join(tmp, "calls.txt");
+    const bin = path.join(tmp, "fake-iapeer");
+    fs.writeFileSync(
+      bin,
+      `#!/usr/bin/env bash\n` +
+        `printf '%s\\n' "$*" >> "${capture}"\n` +
+        `if [ "$1" = "list" ]; then echo '[{"personality":"index","cwd":"${peerCwd}","description":"","runtimes":[{"runtime":"claude","status":"asleep"}]}]'; exit 0; fi\n` +
+        `exit 0\n`,
+    );
+    fs.chmodSync(bin, 0o755);
+    runCli(
+      ["init", "--vault", path.join(tmp, "vault"), "--locale", "en", "--human", "x",
+       "--skip-deps", "--skip-binary", "--iapeer-bin", bin],
+      { IAPEER_MEMORY_SUPPRESS_IAP_SEND: "0", IAPEER_TEST_SANDBOX: "0" },
+    );
+    const calls = fs.readFileSync(capture, "utf-8");
+    // the nameless EXISTING peer is re-described at its REGISTRY cwd — and
+    // never re-created blank (no bare `create index` without a description)
+    expect(calls).toContain(`create index --path ${peerCwd} --description `);
+    expect(calls).not.toMatch(/^create index$/m);
+    // absent role peers are born WITH the description in the same run
+    expect(calls).toContain("create scriber --description ");
+    expect(calls).toContain("create dreamweaver --description ");
   });
 
   it("v1.2 runtime contract: no agentic runtime → graceful BM25-only degrade (exit 0 + advisory)", () => {

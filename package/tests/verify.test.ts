@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { versionMarker } from "@agfpd/iapeer-memory-core";
 import { runVerify, DEFAULT_HEARTBEAT_STALE_MS } from "../src/commands/verify.js";
+import { roleDescription } from "../src/templates/index.js";
 import { memoryPaths, type MemoryPaths } from "../src/paths.js";
 import { writeSlot } from "../src/slot.js";
 import { liveEgress } from "../src/egress.js";
@@ -527,5 +528,82 @@ describe("runVerify — placeholder doctrine is NOT ok (audit important, renders
     const after = fs.readFileSync(path.join(peerCwd, ".iapeer", "IAPEER.md"), "utf-8");
     expect(after).not.toContain("<unknown");
     expect(after).toContain(process.env.IAPEER_MEMORY_VAULT_PATH!); // the host fact landed
+  });
+});
+
+describe("runVerify — role-peer registry descriptions (В36)", () => {
+  it("skip without a manifest; empty description → fail; repair re-asserts via `create --description`", () => {
+    // no roles manifest → init has not run → skip
+    const skip = byName(runVerify(EG, { paths, version: "1.0.0" }), "role-descriptions");
+    expect(skip.status).toBe("skip");
+    expect(skip.detail).toContain("init has not run");
+
+    const indexCwd = path.join(tmp, "peers", "index");
+    fs.mkdirSync(indexCwd, { recursive: true });
+    fs.writeFileSync(
+      paths.rolesManifestPath,
+      JSON.stringify({ roles: [{ role: "index", peerCwd: indexCwd, template: "/t.md" }] }),
+    );
+
+    // fake core bin: `list --json` answers an index row with an EMPTY
+    // description; every other invocation (the repair `create`) is recorded.
+    const capture = path.join(tmp, "calls.txt");
+    const bin = path.join(tmp, "fake-iapeer");
+    fs.writeFileSync(
+      bin,
+      `#!/usr/bin/env bash\n` +
+        `if [ "$1" = "list" ]; then printf '%s' '[{"personality":"index","cwd":"${indexCwd}","description":""}]'; exit 0; fi\n` +
+        `printf '%s\\n' "$*" >> "${capture}"\n`,
+    );
+    fs.chmodSync(bin, 0o755);
+
+    const fail = byName(
+      runVerify(EG, { paths, version: "1.0.0", iapeerBin: bin }),
+      "role-descriptions",
+    );
+    expect(fail.status).toBe("fail");
+    expect(fail.detail).toContain("index");
+
+    const repaired = byName(
+      runVerify(EG, { paths, version: "1.0.0", repair: true, iapeerBin: bin }),
+      "role-descriptions",
+    );
+    expect(repaired.status).toBe("repaired");
+    const calls = fs.readFileSync(capture, "utf-8");
+    // the canonical description is re-asserted at the peer's REGISTRY cwd
+    expect(calls).toContain(
+      `create index --path ${indexCwd} --description ${roleDescription("en", "index")}`,
+    );
+  });
+
+  it("ok when described; role peer absent from the registry → fail with the re-init recipe", () => {
+    const indexCwd = path.join(tmp, "peers", "index");
+    fs.mkdirSync(indexCwd, { recursive: true });
+    fs.writeFileSync(
+      paths.rolesManifestPath,
+      JSON.stringify({ roles: [{ role: "index", peerCwd: indexCwd, template: "/t.md" }] }),
+    );
+
+    const described = path.join(tmp, "fake-iapeer-described");
+    fs.writeFileSync(
+      described,
+      `#!/usr/bin/env bash\nprintf '%s' '[{"personality":"index","cwd":"${indexCwd}","description":"Index — vault curator"}]'\n`,
+    );
+    fs.chmodSync(described, 0o755);
+    const ok = byName(
+      runVerify(EG, { paths, version: "1.0.0", iapeerBin: described }),
+      "role-descriptions",
+    );
+    expect(ok.status).toBe("ok");
+
+    const emptyRegistry = path.join(tmp, "fake-iapeer-empty");
+    fs.writeFileSync(emptyRegistry, `#!/usr/bin/env bash\nprintf '%s' '[]'\n`);
+    fs.chmodSync(emptyRegistry, 0o755);
+    const missing = byName(
+      runVerify(EG, { paths, version: "1.0.0", iapeerBin: emptyRegistry }),
+      "role-descriptions",
+    );
+    expect(missing.status).toBe("fail");
+    expect(missing.detail).toContain("re-run iapeer-memory init");
   });
 });

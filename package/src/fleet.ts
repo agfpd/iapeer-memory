@@ -33,6 +33,7 @@ export type FleetMapResult = {
 type ListedPeer = {
   personality?: unknown;
   cwd?: unknown;
+  description?: unknown;
   /** iapeer registry: `[{runtime: "claude"|"codex"|…, status}]`. */
   runtimes?: Array<{ runtime?: unknown }>;
 };
@@ -42,6 +43,11 @@ type ListedPeer = {
  *  forms on it (claude: hooks+mcp+skills; codex: project-local MCP).
  *  Core's memoryd reader takes personality/cwd only — additive, fail-open. */
 export type FleetPeer = { personality: string; cwd: string; runtimes: string[] };
+
+/** queryRegistry's richer row: the registry `description` rides along for
+ *  registry-facing checks (verify's role-descriptions). NOT persisted into
+ *  the fleet map — the map stays the lean personality→cwd(+runtimes) joint. */
+export type RegistryPeer = FleetPeer & { description: string };
 
 /** Fail-open fleet-map reader (the package side: the surfaces sweep and
  *  verify's per-peer checks). Missing/unreadable map → null — callers report
@@ -88,7 +94,7 @@ export function readFleetMap(fleetMapPath: string): FleetPeer[] | null {
 export function queryRegistry(
   egress: Egress,
   opts: { iapeerBin?: string },
-): { peers: FleetPeer[] } | { error: string } {
+): { peers: RegistryPeer[] } | { error: string } {
   const bin = opts.iapeerBin ?? IAPEER_BIN;
   const proc = egress.spawnSync([bin, "list", "--json"], {
     explicitBin: opts.iapeerBin !== undefined,
@@ -121,6 +127,7 @@ export function queryRegistry(
       .map((p) => ({
         personality: p.personality.trim(),
         cwd: p.cwd.trim(),
+        description: typeof p.description === "string" ? p.description.trim() : "",
         runtimes: [
           ...new Set(
             (Array.isArray(p.runtimes) ? p.runtimes : [])
@@ -145,7 +152,13 @@ export function writeFleetMap(
   if ("error" in q) {
     return { action: "failed", count: 0, detail: q.error };
   }
-  const peers = q.peers;
+  // Persist the LEAN map form — description is a registry-facing extra
+  // (verify's role-descriptions check), not part of the map contract.
+  const peers: FleetPeer[] = q.peers.map(({ personality, cwd, runtimes }) => ({
+    personality,
+    cwd,
+    runtimes,
+  }));
 
   const body =
     JSON.stringify(

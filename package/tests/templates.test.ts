@@ -8,6 +8,7 @@ import {
   guideTemplatePath,
   guideText,
   materialiseTemplates,
+  roleDescription,
   roleDoctrineTemplate,
   roleTemplatePath,
   ROLE_NAMES,
@@ -42,6 +43,21 @@ describe("embedded templates", () => {
         expect(text).toContain(`role: ${role}`);
         expect(seen.has(text)).toBe(false);
         seen.add(text);
+      }
+    }
+    expect(seen.size).toBe(6);
+  });
+
+  it("role descriptions: one non-empty single-line sentence per role in both locales, within the core's 450-char clamp", () => {
+    const seen = new Set<string>();
+    for (const locale of ["en", "ru"] as const) {
+      for (const role of ROLE_NAMES) {
+        const d = roleDescription(locale, role);
+        expect(d.trim().length).toBeGreaterThan(0);
+        expect(d.length).toBeLessThanOrEqual(450); // core clamps at 450 — must fit unclamped
+        expect(d).not.toContain("\n");
+        expect(seen.has(d)).toBe(false); // roles must be distinguishable in `iapeer list`
+        seen.add(d);
       }
     }
     expect(seen.size).toBe(6);

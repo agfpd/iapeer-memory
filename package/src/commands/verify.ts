@@ -26,9 +26,16 @@ import {
   renderedVersion,
   resolveMode,
   curationPlan,
+  type LocaleId,
 } from "@agfpd/iapeer-memory-core";
-import type { Egress } from "../egress.js";
-import { readFleetMap, writeFleetMap } from "../fleet.js";
+import { IAPEER_BIN, type Egress } from "../egress.js";
+import { readFleetMap, writeFleetMap, queryRegistry } from "../fleet.js";
+import {
+  roleDescription,
+  rolePersonality,
+  ROLE_NAMES,
+  type RoleName,
+} from "../templates/index.js";
 import { memoryPaths, type MemoryPaths } from "../paths.js";
 import { readRolesManifest } from "../roles.js";
 import { readSlot, slotProvisionBlocks, writeSlot, SLOT_PROVIDER } from "../slot.js";
@@ -148,10 +155,12 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
   // 1. config / env context
   let configOk = false;
   let vaultPathForDoctrines: string | undefined;
+  let localeForRoles: LocaleId | undefined;
   try {
     const config = configFromEnv();
     configOk = true;
     vaultPathForDoctrines = config.vaultPath;
+    localeForRoles = config.locale;
     results.push({
       name: "config",
       status: "ok",
@@ -541,6 +550,7 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
 
   // 4. role doctrine versions (ADR-010 marker)
   let manifestRaw: string | null = null;
+  let manifest: RolesManifest | null = null;
   try {
     manifestRaw = fs.readFileSync(paths.rolesManifestPath, "utf-8");
   } catch {
@@ -553,7 +563,6 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
       detail: `roles manifest absent (${paths.rolesManifestPath}) — init has not run`,
     });
   } else {
-    let manifest: RolesManifest | null = null;
     try {
       const parsed = JSON.parse(manifestRaw) as RolesManifest;
       if (!Array.isArray(parsed.roles)) throw new Error("no roles array");
@@ -615,6 +624,105 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
           status: "repaired",
           detail: `${problem} — re-rendered to v${version}`,
         });
+      }
+    }
+  }
+
+  // 5. role-peer registry descriptions (В36): an EMPTY registry description
+  // leaves a role peer nameless in `iapeer list` and every fleet index — a
+  // provisioning defect (pre-0.4.17 init created role peers without a
+  // description; regen preserved the emptiness). Repair re-asserts the
+  // canonical role description via the core's sanctioned re-provision verb
+  // (`iapeer create --path <cwd> --description <d>` — В36: updates the local
+  // profile AND the registry row; the doctrine is no-clobber). ONLY an empty
+  // description is repaired — an operator-tuned one is never overwritten.
+  if (manifest === null) {
+    results.push({
+      name: "role-descriptions",
+      status: "skip",
+      detail: "roles manifest absent/unreadable — init has not run (see role-doctrines)",
+    });
+  } else if (localeForRoles === undefined) {
+    results.push({
+      name: "role-descriptions",
+      status: "skip",
+      detail: "locale unknown (config check failed) — cannot pick the description locale",
+    });
+  } else {
+    const locale = localeForRoles;
+    const roleSet = manifest.roles
+      .map((r) => r.role)
+      .filter((r): r is RoleName => (ROLE_NAMES as readonly string[]).includes(r));
+    const q = queryRegistry(egress, { iapeerBin: opts.iapeerBin });
+    if ("error" in q) {
+      results.push({
+        name: "role-descriptions",
+        status: "skip",
+        detail: `registry unavailable — ${q.error}`,
+      });
+    } else {
+      const missing: string[] = [];
+      const empty: Array<{ role: RoleName; personality: string; cwd: string }> = [];
+      for (const role of roleSet) {
+        const personality = rolePersonality(role);
+        const rec = q.peers.find((p) => p.personality === personality);
+        if (!rec) missing.push(personality);
+        else if (!rec.description.trim()) empty.push({ role, personality, cwd: rec.cwd });
+      }
+      if (missing.length > 0) {
+        // Creating peers is init's job (runtime detection, degrade, collision
+        // guard live there) — verify reports with the recipe, never half-inits.
+        results.push({
+          name: "role-descriptions",
+          status: "fail",
+          detail: `role peer(s) absent from the iapeer registry: ${missing.join(", ")} — re-run iapeer-memory init`,
+        });
+      } else if (empty.length === 0) {
+        results.push({
+          name: "role-descriptions",
+          status: "ok",
+          detail: `${roleSet.map((r) => rolePersonality(r)).join(", ")} described`,
+        });
+      } else if (!repair) {
+        results.push({
+          name: "role-descriptions",
+          status: "fail",
+          detail: `empty registry description: ${empty.map((e) => e.personality).join(", ")} — repair re-asserts the role descriptions`,
+        });
+      } else {
+        const failed: string[] = [];
+        for (const e of empty) {
+          const proc = egress.spawnSync(
+            [
+              opts.iapeerBin ?? IAPEER_BIN,
+              "create",
+              e.personality,
+              "--path",
+              e.cwd,
+              "--description",
+              roleDescription(locale, e.role),
+            ],
+            { explicitBin: opts.iapeerBin !== undefined },
+          );
+          if (proc.refused) failed.push(`${e.personality} (spawn refused — test sandbox)`);
+          else if (proc.spawnError) failed.push(`${e.personality} (${proc.spawnError})`);
+          else if (proc.exitCode !== 0) {
+            failed.push(`${e.personality} (${proc.stderr.trim() || `exit ${proc.exitCode}`})`);
+          }
+        }
+        results.push(
+          failed.length > 0
+            ? {
+                name: "role-descriptions",
+                status: "fail",
+                detail: `description re-assert failed: ${failed.join("; ")}`,
+              }
+            : {
+                name: "role-descriptions",
+                status: "repaired",
+                detail: `description re-asserted: ${empty.map((e) => e.personality).join(", ")}`,
+              },
+        );
       }
     }
   }
