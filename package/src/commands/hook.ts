@@ -190,7 +190,7 @@ export function runPostWrite(
   // too (official codex hooks docs — the earlier «claude-only» was wrong), so
   // the SAME schema reaches both runtimes. `files` already covers claude
   // Write/Edit and codex apply_patch (multi-file).
-  const problems = collectTagProblems(files, vault, taxonomy);
+  const problems = collectTagProblems(files, vault, taxonomy, memoryPaths(env).tagsMirrorPath);
   const output = problems.length
     ? JSON.stringify({
         hookSpecificOutput: {
@@ -204,23 +204,37 @@ export function runPostWrite(
 
 /**
  * Tag-gate problems across the just-written CANON files (lean §3). Reads the
- * dictionary from the vault; FAIL-OPEN — an unreadable/empty dictionary (e.g.
- * an evicted iCloud placeholder) yields no problems rather than rejecting
+ * dictionary from the LOCAL MIRROR first (audit cosmetic: the mirror exists
+ * exactly because reading the iCloud source risks a dataless placeholder —
+ * fail-open on an evicted source silently disarmed the gate), falling back
+ * to the vault source while the mirror is not yet materialised. FAIL-OPEN —
+ * an unreadable/empty dictionary yields no problems rather than rejecting
  * every tag. The agent-memory (operative) zone is not gated (canon only).
  */
 export function collectTagProblems(
   files: string[],
   vault: string,
   taxonomy: TaxonomyPreset,
+  mirrorPath?: string,
 ): string[] {
   const dictRel = tagsDictionarySourceRel(taxonomy);
   let allow: Set<string> | null = null;
-  try {
-    const dict = fs.readFileSync(path.join(vault, dictRel), "utf-8");
-    if (dict.trim()) allow = new Set(parseDictionaryTags(dict));
-  } catch {
-    // fail-open
+  let dict = "";
+  if (mirrorPath) {
+    try {
+      dict = fs.readFileSync(mirrorPath, "utf-8");
+    } catch {
+      // mirror not materialised yet — fall back to the source
+    }
   }
+  if (!dict.trim()) {
+    try {
+      dict = fs.readFileSync(path.join(vault, dictRel), "utf-8");
+    } catch {
+      // fail-open
+    }
+  }
+  if (dict.trim()) allow = new Set(parseDictionaryTags(dict));
   if (!allow) return [];
   const out: string[] = [];
   for (const f of files) {

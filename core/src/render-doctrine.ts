@@ -111,13 +111,19 @@ export function renderDoctrine(opts: {
  * Render a set of role doctrines (role → template path / peer cwd).
  * Missing templates are reported per-role; other roles still render
  * (parity with the reference's per-entry resilience).
+ *
+ * `vaultPath` is REQUIRED here even though renderDoctrine's is optional
+ * (audit cosmetic): this is an exported core API — a future caller reaching
+ * for the «proper» batch wrapper must be forced to carry the host fact, or
+ * every doctrine it renders ships the `{{VAULT_PATH}}` placeholder.
  */
 export function renderRoleDoctrines(opts: {
   roles: Array<{ role: string; templatePath: string; peerCwd: string }>;
   version: string;
+  vaultPath: string;
 }): Array<{ role: string } & RenderOutcome> {
   return opts.roles.map(({ role, templatePath, peerCwd }) => ({
     role,
-    ...renderDoctrine({ templatePath, peerCwd, version: opts.version }),
+    ...renderDoctrine({ templatePath, peerCwd, version: opts.version, vaultPath: opts.vaultPath }),
   }));
 }

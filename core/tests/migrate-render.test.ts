@@ -257,6 +257,7 @@ describe("render-doctrine: templates → peerDoctrine with a version marker", ()
   it("missing template reported; other roles still render", () => {
     const out = renderRoleDoctrines({
       version: "1.0.0",
+      vaultPath: tmp,
       roles: [
         { role: "index", templatePath: path.join(tmp, "nope.tmpl"), peerCwd },
         { role: "scriber", templatePath: tpl, peerCwd: path.join(tmp, "peer2") },

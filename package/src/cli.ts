@@ -77,8 +77,9 @@ Commands:
                             ALL content folders incl. 03_Projects (unified rule);
                             memoryd archives ongoing staleness on its own.
   render index|fragment|doctrine|guide
-                            render one artifact explicitly (memoryd does this
-                            continuously; render is the manual/scripted path)
+                            render one artifact explicitly (memoryd renders
+                            index/fragment continuously; doctrine/guide are
+                            rendered by init/update/verify --repair)
   memoryd                   run the daemon in the foreground (stdout = event
                             lines; supervised by a notifier watcher)
   hook post-write|session-start

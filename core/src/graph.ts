@@ -45,6 +45,12 @@ export type VaultMapData = {
     target: string;
     contextSnippet: string | null;
   }>;
+  /** Total degree (in+out) per path — the FULL map, not just hubs. runMap
+   *  ranks cluster top_nodes with it (audit cosmetic: rebuilding the map
+   *  from `hubs` alone gave every node of a hub-less cluster degree 0, so
+   *  «top N by degree» degraded to alphabetical order). Plain object, not a
+   *  Map — VaultMapData must survive JSON serialization. */
+  degreeTotals: Record<string, number>;
 };
 
 // ── Graph loading ──
@@ -118,8 +124,11 @@ function findConnectedComponents(adj: AdjMap, allPaths: Set<string>): string[][]
     const queue = [node];
     visited.add(node);
 
-    while (queue.length > 0) {
-      const current = queue.shift()!;
+    // Index pointer instead of Array.shift() — shift is O(n) per pop, O(n²)
+    // per component on large vaults (audit cosmetic).
+    let head = 0;
+    while (head < queue.length) {
+      const current = queue[head++];
       component.push(current);
 
       const neighbors = adj.get(current);
@@ -167,50 +176,63 @@ function calcDegrees(directed: Map<string, Set<string>>, allPaths: Set<string>):
 function findArticulationPoints(adj: AdjMap, allPaths: Set<string>): Set<string> {
   const disc = new Map<string, number>();
   const low = new Map<string, number>();
-  const parent = new Map<string, string | null>();
   const ap = new Set<string>();
   let timer = 0;
 
-  function dfs(u: string): void {
-    let children = 0;
-    disc.set(u, timer);
-    low.set(u, timer);
+  // Iterative Tarjan with an explicit frame stack (audit cosmetic): the
+  // recursive dfs blew the call stack on a vault with a note chain thousands
+  // long — RangeError made memory_map unavailable exactly on large vaults.
+  // Behaviourally equivalent: low[] propagation happens when a child frame
+  // pops, back-edges are folded in as neighbors are consumed.
+  type Frame = {
+    u: string;
+    parent: string | null;
+    iter: Iterator<string>;
+    children: number;
+  };
+  const EMPTY: Set<string> = new Set();
+
+  for (const root of allPaths) {
+    if (disc.has(root)) continue;
+    disc.set(root, timer);
+    low.set(root, timer);
     timer++;
+    const stack: Frame[] = [
+      { u: root, parent: null, iter: (adj.get(root) ?? EMPTY).values(), children: 0 },
+    ];
 
-    const neighbors = adj.get(u);
-    if (!neighbors) return;
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1];
+      const next = frame.iter.next();
 
-    for (const v of neighbors) {
-      if (!disc.has(v)) {
-        children++;
-        parent.set(v, u);
-        dfs(v);
-
-        const lowU = low.get(u)!;
-        const lowV = low.get(v)!;
-        low.set(u, Math.min(lowU, lowV));
-
-        // Root with 2+ children
-        if (parent.get(u) === null && children > 1) {
-          ap.add(u);
+      if (!next.done) {
+        const v = next.value;
+        if (!disc.has(v)) {
+          frame.children++;
+          disc.set(v, timer);
+          low.set(v, timer);
+          timer++;
+          stack.push({ u: v, parent: frame.u, iter: (adj.get(v) ?? EMPTY).values(), children: 0 });
+        } else if (v !== frame.parent) {
+          low.set(frame.u, Math.min(low.get(frame.u)!, disc.get(v)!));
         }
-
-        // Non-root where low[v] >= disc[u]
-        if (parent.get(u) !== null && lowV >= disc.get(u)!) {
-          ap.add(u);
-        }
-      } else if (v !== parent.get(u)) {
-        const lowU = low.get(u)!;
-        const discV = disc.get(v)!;
-        low.set(u, Math.min(lowU, discV));
+        continue;
       }
-    }
-  }
 
-  for (const node of allPaths) {
-    if (!disc.has(node)) {
-      parent.set(node, null);
-      dfs(node);
+      // Frame exhausted — pop and propagate low to the parent frame.
+      stack.pop();
+      const parentFrame = stack[stack.length - 1];
+      if (parentFrame) {
+        low.set(parentFrame.u, Math.min(low.get(parentFrame.u)!, low.get(frame.u)!));
+        // Non-root articulation: a child subtree that can't reach above u.
+        if (parentFrame.parent !== null && low.get(frame.u)! >= disc.get(parentFrame.u)!) {
+          ap.add(parentFrame.u);
+        }
+      }
+      // Root with 2+ DFS children.
+      if (frame.parent === null && frame.children > 1) {
+        ap.add(frame.u);
+      }
     }
   }
 
@@ -306,8 +328,9 @@ function bridgeConnects(
     const group = new Set<string>();
     const queue = [start];
     visited.add(start);
-    while (queue.length > 0) {
-      const cur = queue.shift()!;
+    let head = 0; // index pointer — shift() is O(n²) per group (audit cosmetic)
+    while (head < queue.length) {
+      const cur = queue[head++];
       group.add(cur);
       const curNeighbors = adj.get(cur);
       if (curNeighbors) {
@@ -429,6 +452,13 @@ export function buildVaultMap(db: CoreDb, config: CoreConfig): VaultMapData {
     config.taxonomy.folders.agentMemory,
   );
 
+  // Full degree map for consumers (runMap cluster ranking) — plain object so
+  // it survives JSON round-trips.
+  const degreeTotals: Record<string, number> = {};
+  for (const [p, d] of degrees) {
+    degreeTotals[p] = d.in + d.out;
+  }
+
   return {
     generated: new Date().toISOString(),
     stats: {
@@ -447,6 +477,7 @@ export function buildVaultMap(db: CoreDb, config: CoreConfig): VaultMapData {
     orphans: orphans.sort(),
     orphanWikilinks,
     activeToArchiveLinks,
+    degreeTotals,
   };
 }
 

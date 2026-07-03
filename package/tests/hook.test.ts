@@ -38,6 +38,12 @@ function env(extra: Record<string, string> = {}): Record<string, string | undefi
   return {
     IAPEER_MEMORY_VAULT_PATH: vault,
     PEER_PERSONALITY: "tester",
+    // Hermetic mirror path: the tag gate reads the tags-dictionary MIRROR
+    // first (<cacheDir>/tags-dictionary.md) — without this override the
+    // sandbox test would read the HOST's live mirror (the read-only-leak
+    // class: a sandbox vault with no dictionary must fail-open, not gate
+    // against prod tags).
+    IAPEER_MEMORY_CACHE_DIR: path.join(tmp, "cache"),
     ...extra,
   };
 }
@@ -173,6 +179,22 @@ describe("hook post-write — tag gate (lean §3)", () => {
     const r = runPostWrite(writeEvent("Write", file), env());
     expect(r.stamped).toBe(true);
     expect(r.output).toBeNull();
+  });
+
+  it("mirror-first: gate reads the local mirror even when the iCloud source is absent", () => {
+    // No vault dictionary at all (evicted-source scenario) — only the mirror.
+    const cacheDir = path.join(tmp, "cache");
+    fs.mkdirSync(cacheDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(cacheDir, "tags-dictionary.md"),
+      "# Tags\n\n| Tag | Boundary |\n|---|---|\n| Память | memory |\n",
+    );
+    const bad = canon("tags:\n  - НетТакого\n");
+    const r = runPostWrite(writeEvent("Write", bad), env());
+    expect(teaching(r)).toContain("НетТакого"); // gate ALIVE off the mirror
+    const good = canon("tags:\n  - Память\n");
+    const r2 = runPostWrite(writeEvent("Write", good), env());
+    expect(r2.output).toBeNull();
   });
 
   it("codex apply_patch RECEIVES the tag teaching too (codex supports PostToolUse additionalContext)", () => {

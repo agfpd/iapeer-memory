@@ -24,7 +24,7 @@ What `init` provisions:
 - **configuration** at `~/.iapeer/plugins/iapeer-memory/config.env` — vault path, language, owner name, MCP port, search endpoints (you edit it later, the package won't overwrite it; all variables are in [11 — Configuration](11-configuration.md));
 - **binary** at `~/.local/bin/iapeer-memory`;
 - **curators** — creates the role agents (Index for links and health, Scriber for canon proofreading, DreamWeaver for consolidation) with their doctrines; the roles are ephemeral and spin up on a tick;
-- **daemon** — registers `memoryd` under `notifier` (the watcher restarts it on a crash) and the weekly consolidation timer;
+- **daemon** — registers `memoryd` under `notifier` (the watcher restarts it on a crash); the weekly consolidation timer is registered only in the `curated` mode — a fresh `init` writes the `lean` default, where no curation ticks fire (see [11 — Configuration](11-configuration.md));
 - **memory slot** — writes `~/.iapeer/memory-provider.json`, claiming the single per-host slot;
 - **disables native memory** for Claude and Codex (`iapeer native-memory off --all`) so there's no second store;
 - **guide** — places a memory how-to into the shared system-prompt layer.

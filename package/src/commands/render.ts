@@ -1,7 +1,9 @@
 /**
  * `iapeer-memory render` — explicit one-shot rendering of the package's
- * artifacts. memoryd renders these continuously at runtime; `render` is the
- * manual/scripted path (init, repair, debugging, tests).
+ * artifacts. memoryd continuously renders index/fragment at runtime;
+ * doctrine/guide are rendered by init/update/verify --repair (the daemon
+ * never touches them). `render` is the manual/scripted path for all four
+ * (init, repair, debugging, tests).
  *
  *   render index    --agent NAME [--out FILE] [--projects-root DIR]
  *   render fragment --agent NAME --peer-cwd DIR [--index FILE]

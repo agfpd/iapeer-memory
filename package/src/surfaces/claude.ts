@@ -199,8 +199,32 @@ export function readJsonObject(filePath: string): JsonObject | null | "absent" {
   }
 }
 
+/**
+ * Structural deep-equal, key-order-INSENSITIVE for objects (audit cosmetic:
+ * the stringify comparison read a `claude mcp add`-reserialized .mcp.json —
+ * same entry, different key order — as drift, and every verify --repair
+ * rewrote the file the foreign tool would re-normalise again: perpetual
+ * mutual churn on a perfectly healthy surface). Array ORDER stays significant
+ * — for hooks lists it carries meaning.
+ */
 export function sameJson(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  if (a === b) return true;
+  if (typeof a !== typeof b) return false;
+  if (a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((item, i) => sameJson(item, b[i]));
+  }
+  if (typeof a === "object") {
+    const ka = Object.keys(a as Record<string, unknown>);
+    const kb = Object.keys(b as Record<string, unknown>);
+    if (ka.length !== kb.length) return false;
+    return ka.every((k) =>
+      Object.prototype.hasOwnProperty.call(b, k) &&
+      sameJson((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]),
+    );
+  }
+  return false; // primitives already failed ===
 }
 
 export function isOurHookEntry(entry: unknown): boolean {

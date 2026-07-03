@@ -906,6 +906,10 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
    *  не доктриной). */
   // ── per-peer fragments (docs/05: свежесть за секунды от FS-изменений) ──
   const fragments = opts.fragments ?? null;
+  // The needs_review finalizer name — SHARED by the fragment renderer and
+  // curatorClearPass (audit cosmetic: the clear pass hardcoded "index", so a
+  // deployment with a renamed finalizer never auto-cleared the flag).
+  const indexAgent = fragments?.indexAgent ?? "index";
   let fleetCache: { mtimeMs: number; peers: FleetPeer[] } | null = null;
   let warnedFleetReadBlocked = false;
 
@@ -963,7 +967,6 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
       logger.warn(`fragments: vault collect failed (${String(err)}) — pass skipped`);
       return;
     }
-    const indexAgent = fragments.indexAgent ?? "index";
     let rendered = 0;
     for (const peer of peers) {
       try {
@@ -1287,7 +1290,7 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
       const fm = /^---[^\S\n]*\n([\s\S]*?)\n---/.exec(content);
       if (!fm) continue;
       const leb = /^last_edited_by\s*:\s*(.+?)\s*$/m.exec(fm[1]);
-      if (!leb || leb[1].trim() !== "index") continue; // only the finalizer clears (inv 7)
+      if (!leb || leb[1].trim() !== indexAgent) continue; // only the finalizer clears (inv 7)
       const nr = /^needs_review\s*:\s*(\S+)/m.exec(fm[1]);
       if (!nr || nr[1].replace(/#.*$/, "").trim() !== "true") continue; // nothing flagged
       const prev = prevSmart.get(abs);
@@ -1550,10 +1553,16 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
   function touchHeartbeat(): void {
     try {
       fs.mkdirSync(path.dirname(heartbeatPath), { recursive: true });
+      // tmp+rename like every other state file (audit cosmetic): a reader
+      // (verify / SessionStart health-check) landing between truncate and
+      // write saw an empty/partial heartbeat → false «memoryd unhealthy».
+      // Single writer (the lock guarantees it) — a fixed tmp name is safe.
+      const tmp = `${heartbeatPath}.tmp`;
       guardedWriteFileSync(
-        heartbeatPath,
+        tmp,
         `${new Date().toISOString()} ${os.hostname()} watch=${watcher ? "on" : "off"}\n`,
       );
+      guardedRenameSync(tmp, heartbeatPath);
     } catch (err) {
       logger.error(`heartbeat write failed: ${String(err)}`);
     }
@@ -1723,10 +1732,16 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
         clearTimeout(flushTimer);
         flushTimer = null;
       }
+      // Serialize through the SAME chain schedule() uses (audit cosmetic): a
+      // bare `await flush()` here could interleave with a debounce-timer
+      // flush armed during the await — two indexAll runs racing on their
+      // await boundaries. FULL pass: the hook's contract is «force one
+      // complete detect pass» — tests and operators call it without knowing
+      // what fs.watch delivered.
+      flushing = flushing.then(() => flush(true)).catch((err) => {
+        logger.error(`detect-pass flush failed: ${String(err)}`);
+      });
       await flushing;
-      // FULL pass: the hook's contract is «force one complete detect pass» —
-      // tests and operators call it without knowing what fs.watch delivered.
-      await flush(true);
     },
     close: async () => {
       shuttingDown = true; // shutdown flush is structural-only (embed:false)

@@ -43,7 +43,7 @@ iapeer-memory gives an agent team shared, long-term memory. One agent records a 
 
 **MCP tools** — how an agent works with memory: `memory_search` (search by meaning and content), `memory_related` (the link graph around a note), `memory_map` (store topology). All read-only; writing is an ordinary file create. See [06 — Search and write](06-search-and-write.md).
 
-**Curators** — the role agents that keep order: Index, Scriber, DreamWeaver. All ephemeral: they spin up on the `CURATOR_TICK` tick or on demand, do their pass, and wind down — there is no standing curator, only `memoryd` is persistent. Index enriches links and repairs store health (broken links, duplicates). Scriber proofreads canon notes (style, fact-checking). DreamWeaver consolidates operative memory (weekly, on a timer). Placing notes is not the curators' job: the author writes straight into a typed folder. See [08 — Curation](08-curation.md).
+**Curators** — the role agents that keep order: Index, Scriber, DreamWeaver. All ephemeral: they spin up on the `CURATOR_TICK` tick or on demand, do their pass, and wind down — there is no standing curator, only `memoryd` is persistent. Index enriches links and repairs store health (broken links, duplicates). Scriber proofreads canon notes (style, fact-checking). DreamWeaver consolidates operative memory (weekly, on a timer). The ticks and the timer fire in the `curated` mode; the default `lean` mode runs no curation ticks — the author curates as they write. Placing notes is not the curators' job: the author writes straight into a typed folder. See [08 — Curation](08-curation.md).
 
 ## How memory reaches an agent
 

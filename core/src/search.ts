@@ -100,6 +100,21 @@ export async function runVaultSearch(params: {
   const maxResults = config.search.maxResults;
   const candidateLimit = maxResults * 4; // Fetch more for fusion/reranking
 
+  // Per-search meta cache (audit cosmetic): one query reads+JSON.parses the
+  // SAME note's meta up to 5× (status boost, foreign-operative penalty,
+  // reranker evidence, graph expand, result assembly) — ~90 point-queries per
+  // search. The cache lives exactly one runVaultSearch call, so staleness is
+  // bounded by the request itself.
+  const metaCache = new Map<string, ReturnType<typeof getDocumentMeta>>();
+  const getMeta = (p: string): ReturnType<typeof getDocumentMeta> => {
+    let m = metaCache.get(p);
+    if (m === undefined) {
+      m = getDocumentMeta(db, p);
+      metaCache.set(p, m);
+    }
+    return m;
+  };
+
   // Default initialisation учитывает наличие config:
   //   - endpoint не настроен в env → "disabled" (terminal, шаг никогда не
   //     запустится в этой сессии).
@@ -167,14 +182,14 @@ export async function runVaultSearch(params: {
   // здесь остаётся только семантический буст по `status` — он осмысленно
   // нормализуется в пуле кандидатов (актуальное > устаревшего внутри
   // ранжирования reranker'а), не зависит от author.
-  fused = applyStatusBoost(db, fused, config);
+  fused = applyStatusBoost(getMeta, fused, config);
 
   // --- Step 5: Cross-encoder rerank ---
   // pipeline.reranker уже инициализирован "disabled" если endpoint не задан,
   // либо "skipped" если задан но шаг не запустился (например fused ≤1).
   // Перезаписываем только когда реально дёрнули endpoint.
   if (config.reranker && fused.length > 1) {
-    const rerankResult = await applyReranker(db, query, fused, config);
+    const rerankResult = await applyReranker(db, getMeta, query, fused, config);
     fused = rerankResult.items;
     pipeline.reranker = rerankResult.status;
   }
@@ -185,7 +200,7 @@ export async function runVaultSearch(params: {
   // этот шаг (Индекс при построении `## Связи` должен видеть intra-папку
   // на равных с каноном).
   if (!forCuration && config.callerAgent) {
-    fused = applyForeignOperativePenalty(db, fused, config.callerAgent, config);
+    fused = applyForeignOperativePenalty(getMeta, fused, config.callerAgent, config);
   }
 
   const t3 = Date.now();
@@ -202,7 +217,7 @@ export async function runVaultSearch(params: {
   const topFused = fused.slice(0, maxResults);
 
   // --- Step 6: Graph expand (1 hop) ---
-  const expanded = graphExpand(db, topFused, maxResults, config);
+  const expanded = graphExpand(db, getMeta, topFused, maxResults, config);
 
   // --- Step 7: Backlink boost ---
   applyBacklinkBoost(db, expanded, config);
@@ -222,7 +237,7 @@ export async function runVaultSearch(params: {
 
   // Build result objects
   const results: VaultSearchResult[] = expanded.slice(0, maxResults).map((item) => {
-    const meta = getDocumentMeta(db, item.path);
+    const meta = getMeta(item.path);
     const related = getRelatedTopByDegree(db, item.path, RELATED_LIMIT);
 
     // Snippet is built uniformly here from the note's own chunk texts, not
@@ -471,13 +486,16 @@ function rrfFusion(
 // правящиеся заметки иначе зависают в полузабытом состоянии до
 // permanent-tick'а (до 6 часов) — инверсия ранжирования. Флаг работает
 // как маркер для Индекса/монитора, не как сигнал ранжирования.
+/** Per-search cached meta lookup — built once per runVaultSearch call. */
+type MetaGetter = (p: string) => ReturnType<typeof getDocumentMeta>;
+
 function applyStatusBoost(
-  db: CoreDb,
+  getMeta: MetaGetter,
   items: Array<{ path: string; score: number; snippet: string }>,
   config: CoreConfig,
 ): Array<{ path: string; score: number; snippet: string }> {
   return items.map((item) => {
-    const meta = getDocumentMeta(db, item.path);
+    const meta = getMeta(item.path);
     if (!meta) return item;
 
     const status = meta.status?.toLowerCase();
@@ -516,7 +534,7 @@ function applyStatusBoost(
 // frontmatter заметки (load-bearing — равен имени подпапки
 // `06_Оперативка_агентов/<имя>/`).
 function applyForeignOperativePenalty(
-  db: CoreDb,
+  getMeta: MetaGetter,
   items: Array<{ path: string; score: number; snippet: string }>,
   callerAgent: string,
   config: CoreConfig,
@@ -524,7 +542,7 @@ function applyForeignOperativePenalty(
   const marker = agentMemoryFolderMarker(config.taxonomy);
   return items.map((item) => {
     if (!item.path.includes(marker)) return item;
-    const meta = getDocumentMeta(db, item.path);
+    const meta = getMeta(item.path);
     if (!meta) return item;
     const author = meta.frontmatter?.author as string | undefined;
     if (!author || author === callerAgent) return item;
@@ -536,6 +554,7 @@ function applyForeignOperativePenalty(
 
 async function applyReranker(
   db: CoreDb,
+  getMeta: MetaGetter,
   query: string,
   items: Array<{ path: string; score: number; snippet: string }>,
   config: CoreConfig,
@@ -564,7 +583,7 @@ async function applyReranker(
   // class the final result snippet uses: the body window around the query
   // terms, or the first real prose for a no-overlap semantic hit.
   const texts = candidates.map((item) => {
-    const meta = getDocumentMeta(db, item.path);
+    const meta = getMeta(item.path);
     const title = meta?.title ?? item.path;
     const body = item.snippet || buildSnippet(query, getChunkTexts(db, item.path), title);
     return `${title}\n${body}`.trim();
@@ -613,6 +632,7 @@ async function applyReranker(
 
 function graphExpand(
   db: CoreDb,
+  getMeta: MetaGetter,
   items: Array<{ path: string; score: number; snippet: string }>,
   maxResults: number,
   config: CoreConfig,
@@ -626,7 +646,7 @@ function graphExpand(
     for (const neighborPath of neighbors) {
       if (existing.has(neighborPath)) continue;
       // Only include neighbors that exist in the index
-      const meta = getDocumentMeta(db, neighborPath);
+      const meta = getMeta(neighborPath);
       if (!meta) continue;
       existing.add(neighborPath);
       expanded.push({

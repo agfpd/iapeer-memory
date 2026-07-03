@@ -153,6 +153,12 @@ export function openDatabase(config: CoreConfig, options: OpenDatabaseOptions = 
       PRIMARY KEY (source_path, target_path)
     );
 
+    -- The composite PK indexes source_path only; every incoming-link query
+    -- (backlink boost per search result, runGraph incoming, getBacklinks)
+    -- filters on target_path and would full-scan edges without this
+    -- (audit cosmetic). IF NOT EXISTS makes it a transparent migration.
+    CREATE INDEX IF NOT EXISTS edges_target ON edges(target_path);
+
     -- Wikilinks that could not be resolved to a real note. Kept first-class
     -- instead of being silently dropped from edges: a missing/ambiguous link
     -- is a vault health signal (surfaced via memory_map orphan_wikilinks +

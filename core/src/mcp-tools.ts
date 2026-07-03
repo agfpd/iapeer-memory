@@ -208,7 +208,11 @@ export async function runRead(
     }
     // Race with deletion — file was indexed but is now gone. Surface as
     // not-found rather than tool error so the caller can fall back to search.
-    return { found: false, error: `Document not found: ${docPath} (${String(err)})` };
+    // The raw error goes to stderr only (audit cosmetic): Node's ENOENT text
+    // carries the absolute vault path + host username — internal host facts
+    // that must not leak into the tool payload.
+    console.warn(`[mcp] vault_read failed on ${docPath}: ${String(err)}`);
+    return { found: false, error: `Document not found: ${docPath}` };
   }
 
   const parsed = parseMarkdown(
@@ -398,14 +402,10 @@ export function runMap(
 
   const data = buildVaultMap(db, config);
 
-  // Pre-compute degree map once so we can rank nodes inside each cluster
-  // without an N×getDocumentMeta sweep.
-  const degreeByPath = new Map<string, number>();
-  if (detail === "summary" && requested.has("clusters")) {
-    for (const h of data.hubs) {
-      degreeByPath.set(h.path, h.total);
-    }
-  }
+  // FULL degree map from buildVaultMap (audit cosmetic): the old rebuild
+  // from `data.hubs` only knew nodes with degree ≥ 5, so every node of a
+  // hub-less cluster ranked 0 and «top N by degree» was alphabetical.
+  const degreeOf = (p: string): number => data.degreeTotals[p] ?? 0;
 
   // stats are always cheap and orient the agent — kept regardless of `parts`.
   const out: Record<string, unknown> = {
@@ -435,7 +435,7 @@ export function runMap(
       // Summary: only the top N nodes by degree (hubs of this cluster). The
       // hub itself is already in `base.hub` — drop duplicates.
       const ranked = [...c.nodes]
-        .sort((a, b) => (degreeByPath.get(b) ?? 0) - (degreeByPath.get(a) ?? 0))
+        .sort((a, b) => degreeOf(b) - degreeOf(a))
         .filter((p) => p !== c.hub?.path)
         .slice(0, SUMMARY_TOP_NODES_PER_CLUSTER)
         .map((n) => n.split("/").pop()?.replace(/\.md$/, "") ?? n);

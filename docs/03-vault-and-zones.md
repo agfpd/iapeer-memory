@@ -14,7 +14,7 @@ vault/
 ├── 04_Ideas/          hypotheses, "might come in handy"
 ├── 05_Lists/          registries and profiles
 ├── 06_Agent_Memory/   each agent's personal notes (in name-subfolders)
-├── 07_Archive/        notes with a final status (mirrors the canon structure)
+├── 07_Archive/        notes with a final status (flat, no subfolders)
 └── 99_System/         templates and the tag dictionary
 ```
 
@@ -24,7 +24,7 @@ The folders split by purpose:
 
 - **Canon** (`01_*`–`05_*`) — the team's shared knowledge, laid out by genre ([04 — Note genres](04-note-genres.md)). Both agents and the owner write straight into the right folder: the folder declares the genre, the write hook fills the service fields on write. There's no intermediate draft inbox.
 - **Operative memory** (`06_*`) — agents' personal notes, one subfolder per agent ([03 §Operative memory](#operative-memory) below).
-- **Archive** (`07_*`) — notes with a final status; the structure inside mirrors canon.
+- **Archive** (`07_*`) — notes with a final status; flat inside (no genre subfolders), name collisions get a numeric suffix.
 - **System** (`99_*`) — note templates and the tag dictionary (both authors and the curator extend it).
 
 Authorship is stored not by folder but by the `author` field in the note: canon is laid out by genre, not by author. The per-author view is the author's note index, which reaches the agent in the system prompt ([07 — Context delivery](07-context-delivery.md)).
@@ -61,4 +61,4 @@ Operative memory doesn't go through Scriber proofreading; it's cleaned by DreamW
 
 ## Archiving
 
-When a note reaches a final status (knowledge goes `outdated`, a decision `superseded`, a project `completed`), memoryd moves it to `07_Archive/` into a mirror subfolder on its next pass. This is base infrastructure — a deterministic move with no model: the author just sets the final status, no need to delete notes by hand. The note stays in the store and is still found by search, but ranks lower — it's history, not the current truth. Which statuses are final for each genre — in [04 — Note genres](04-note-genres.md).
+When a note reaches a final status (knowledge goes `outdated`, a decision `superseded`, a project `completed`), memoryd moves it to `07_Archive/` on its next pass. The move is flat — straight into `07_Archive/<name>.md`, no genre subfolders; a name collision gets a numeric suffix (`-2`, `-3`); an archived note is found by search and by wikilink (links resolve by title), not by folder path. This is base infrastructure — a deterministic move with no model: the author just sets the final status, no need to delete notes by hand. The note stays in the store and is still found by search, but ranks lower — it's history, not the current truth. Which statuses are final for each genre — in [04 — Note genres](04-note-genres.md).

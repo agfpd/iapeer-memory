@@ -33,6 +33,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import type { TaxonomyPreset } from "./taxonomy.js";
 import {
+  assemble,
   fillPermanentFull,
   stripEmptyArrays,
   normalizeAllScalars,
@@ -246,8 +247,12 @@ export function decideUpdate(input: DecideUpdateInput): DecideUpdateResult {
   newFm = normalizeAllScalars(stripEmptyArrays(newFm));
   const newBody = normalizeLinksBlock(body, input.taxonomy);
   const fmTail = newFm.endsWith("\n") ? "" : "\n";
-  const bodyPrefix = newBody.startsWith("\n") ? "" : "\n";
-  const newContent = `---\n${newFm}${fmTail}---${bodyPrefix}${newBody}`;
+  // The SHARED assemble() from the hook path (mandate §2 «identical on both
+  // paths», audit cosmetic): the local `---${bodyPrefix}${newBody}` rebuild
+  // ate the blank line after the closing fence for a body starting with \n —
+  // a byte flip-flop between the two «identical» writers that jittered the
+  // smart-hash on every human↔agent alternation.
+  const newContent = assemble(`${newFm}${fmTail}`, newBody);
   return {
     action: "write",
     newContent,

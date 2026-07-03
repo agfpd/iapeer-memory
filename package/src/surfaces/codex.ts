@@ -51,7 +51,14 @@ import { guardedUnlinkSync } from "@agfpd/iapeer-memory-core";
 
 export const CODEX_MCP_SECTION = "mcp_servers.iapeer-memory";
 const SECTION_HEADER_RE = /^\s*\[/;
-const OUR_HEADER_RE = /^\s*\[mcp_servers\.iapeer-memory(\.[A-Za-z0-9_.-]+)?\]\s*$/;
+// Recognise BOTH the bare and the quoted TOML key forms as ours (audit
+// cosmetic): `[mcp_servers."iapeer-memory"]` is the same table — a foreign
+// TOML normaliser or an operator hand-edit can produce it, and treating it
+// as foreign made the merge append a bare duplicate → duplicate table =
+// TOML parse error → the peer loses its ENTIRE project-local config.
+// Subsection tail: bare or quoted key segments, mixed freely.
+const OUR_HEADER_RE =
+  /^\s*\[mcp_servers\.(?:iapeer-memory|"iapeer-memory"|'iapeer-memory')((?:\.(?:[A-Za-z0-9_-]+|"[^"]*"|'[^']*'))*)\]\s*$/;
 
 export function codexConfigPath(cwd: string): string {
   return path.join(cwd, ".codex", "config.toml");

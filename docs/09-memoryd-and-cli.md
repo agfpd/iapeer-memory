@@ -9,7 +9,7 @@
 - **indexes the vault** — a full pass at start, then incrementally on file changes (with protection against needless rebuilds: only what actually changed by content is re-indexed);
 - **answers search** — serves an MCP endpoint over HTTP on a local port (8766 by default) with the `memory_search` / `memory_related` / `memory_map` tools;
 - **notices changes** and signals them to curation;
-- **generates the memory map** for an agent and the shared guide into the system-prompt layer;
+- **generates the memory map** for an agent into the system-prompt layer (per-peer fragments: paths block, tag projection, author index; the shared guide is written by `init`/`update`, not by the daemon);
 - **keeps a heartbeat** — a file whose freshness tells whether the daemon is alive.
 
 The index is SQLite at `~/.iapeer/cache/iapeer-memory/index.db` (full-text index plus the link graph; with vector search configured, also embeddings). Configuration is a single file at `~/.iapeer/plugins/iapeer-memory/config.env` (vault path, language, owner name, port, search endpoints); the owner edits it, the package doesn't overwrite it. The full list of variables — in [11 — Configuration](11-configuration.md).

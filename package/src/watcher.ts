@@ -67,7 +67,17 @@ export function launcherScriptContent(binaryPath: string): string {
 
 function writeExecutable(filePath: string, content: string): "written" | "identical" {
   try {
-    if (fs.readFileSync(filePath, "utf-8") === content) return "identical";
+    if (fs.readFileSync(filePath, "utf-8") === content) {
+      // Content identical — but «identical» must include the exec bit (audit
+      // cosmetic): a launcher restored from backup / copied through a
+      // rights-stripping FS read as fine while notifier could not exec it —
+      // memoryd never came up and the repair path reported ok.
+      if ((fs.statSync(filePath).mode & 0o111) === 0) {
+        fs.chmodSync(filePath, 0o755);
+        return "written"; // mode repaired — surface it, not «identical»
+      }
+      return "identical";
+    }
   } catch {
     // absent — write
   }
