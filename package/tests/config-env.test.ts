@@ -78,3 +78,22 @@ describe("loadConfigFile", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe("parseEnvFile — inline comments (audit cosmetic promoted after a live bite)", () => {
+  it("strips the ` #…` tail from an UNQUOTED value", () => {
+    // A comment after the value became part of it, skewed the embedding
+    // fingerprint and triggered a needless full vault re-embed (2026-07-03).
+    const out = parseEnvFile("MODEL=Qwen/Qwen3-Embedding-4B  # actual served model\n");
+    expect(out.MODEL).toBe("Qwen/Qwen3-Embedding-4B");
+  });
+
+  it("keeps `#` inside a QUOTED value verbatim (quoting is the escape hatch)", () => {
+    const out = parseEnvFile('TOKEN="abc #not-a-comment"\n');
+    expect(out.TOKEN).toBe("abc #not-a-comment");
+  });
+
+  it("a bare `#` glued to the value is NOT a comment (needs the space)", () => {
+    const out = parseEnvFile("COLOR=#ff0000\n");
+    expect(out.COLOR).toBe("#ff0000");
+  });
+});

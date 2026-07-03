@@ -799,3 +799,120 @@ describe("runVaultSearch — pipeline status", () => {
     expect(spy).not.toHaveBeenCalled(); // short-circuited без fetch
   });
 });
+
+// ---- search-mcp important batch (audit 2026-07-02) ----
+
+describe("runVaultSearch — reranker tail scale (audit important)", () => {
+  it("candidates outside topK never leapfrog the reranked set in BM25-only mode", async () => {
+    // 4 matching docs, topK=2: the two best get reranked (normalized ≤ 1.0),
+    // the tail used to keep RAW bm25 × 0.3 — at raw > ~3.3 the WORST
+    // candidates topped the final list exactly in the serve-first window.
+    addDoc(db, "01_Знания/top1.md", "Top1", "apple apple apple apple apple");
+    addDoc(db, "01_Знания/top2.md", "Top2", "apple apple apple apple");
+    addDoc(db, "01_Знания/tail1.md", "Tail1", "apple apple apple");
+    addDoc(db, "01_Знания/tail2.md", "Tail2", "apple apple");
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          { index: 0, score: 0.9 },
+          { index: 1, score: 0.8 },
+        ]),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const cfg = makeConfig({
+      reranker: { endpoint: "http://fake/rerank", model: "r", topK: 2, weight: 0.7, apiKey: null },
+    });
+    const out = await runVaultSearch({ db, config: cfg, query: "apple" });
+    const paths = out.results.map((r) => r.path);
+    // The reranked pair holds the top-2 — the tail sits strictly below.
+    expect(paths.slice(0, 2).sort()).toEqual(["01_Знания/top1.md", "01_Знания/top2.md"]);
+    // Tail display scores stay well under the reranked ones (same scale now).
+    const tail = out.results.filter((r) => r.path.includes("tail"));
+    for (const t of tail) expect(t.score).toBeLessThan(0.5);
+  });
+});
+
+describe("runVaultSearch — archive location floor (audit important)", () => {
+  it("a note dragged into the archive with an ACTIVE status ranks with the stale penalty, not the active boost", async () => {
+    // Identical bodies; the archived twin carries status «актуально» (the
+    // one-way «archive ⇒ stale» invariant was bypassed by a manual move).
+    addDoc(db, "01_Знания/живая.md", "Живая", "яблоко яблоко", {}, [], "актуально");
+    addDoc(db, "07_Архив/мёртвая.md", "Мёртвая", "яблоко яблоко", {}, [], "актуально");
+
+    const out = await runVaultSearch({ db, config: makeConfig(), query: "яблоко" });
+    const live = out.results.find((r) => r.path === "01_Знания/живая.md");
+    const dead = out.results.find((r) => r.path === "07_Архив/мёртвая.md");
+    expect(live).toBeDefined();
+    expect(dead).toBeDefined();
+    // ×1.2 vs ×0.5 → the dead note sits at ~stalePenalty/activeBoost of the live one.
+    expect(dead!.score).toBeLessThan(live!.score * 0.6);
+  });
+});
+
+describe("runVaultSearch — reranker sees body evidence for vector-found candidates (audit important)", () => {
+  it("the rerank request carries chunk prose, not a bare title", async () => {
+    addDoc(db, "01_Знания/семантическая.md", "Семантическая", "полный текст про устройство памяти команды");
+    addDoc(db, "01_Знания/лексическая.md", "Лексическая", "запрос запрос запрос");
+
+    const missing = getChunksWithoutEmbeddings(db, 10);
+    const byPath = new Map(missing.map((m) => [m.docPath, m.id]));
+    storeChunkEmbeddings(db, [
+      { id: byPath.get("01_Знания/семантическая.md")!, embedding: Buffer.from(new Float32Array([1, 0, 0]).buffer) },
+      { id: byPath.get("01_Знания/лексическая.md")!, embedding: Buffer.from(new Float32Array([0, 1, 0]).buffer) },
+    ]);
+
+    let rerankTexts: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation((async (url: unknown, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes("/rerank")) {
+        const body = JSON.parse(String(init?.body)) as { texts?: string[]; documents?: string[] };
+        rerankTexts = body.texts ?? body.documents ?? [];
+        return new Response(
+          JSON.stringify(rerankTexts.map((_t, i) => ({ index: i, score: 0.5 }))),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      // embeddings: query vector close to «семантическая»
+      return new Response(JSON.stringify({ data: [{ embedding: [1, 0, 0] }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch);
+
+    const cfg = makeConfig({
+      embedding: { endpoint: "http://fake/v1/embeddings", model: "f", dimensions: 3, batchSize: 32, apiKey: null },
+      reranker: { endpoint: "http://fake/rerank", model: "r", topK: 10, weight: 0.7, apiKey: null },
+    });
+    await runVaultSearch({ db, config: cfg, query: "запрос" });
+
+    // The vector-found note arrived with an EMPTY pipeline snippet — its
+    // rerank text must still carry body prose (pre-fix: bare title).
+    const semantic = rerankTexts.find((t) => t.startsWith("Семантическая"));
+    expect(semantic).toBeDefined();
+    expect(semantic).toContain("устройство памяти");
+  });
+});
+
+describe("runDedup — embed input is capped to the index contract (audit important)", () => {
+  it("a very long note embeds only the head window — no context overflow, no breaker trip", async () => {
+    let embedInputLen = -1;
+    vi.spyOn(globalThis, "fetch").mockImplementation((async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { input: string[] };
+      embedInputLen = body.input[0]!.length;
+      return new Response(JSON.stringify({ data: [{ embedding: [1, 0, 0] }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch);
+
+    const cfg = makeConfig({
+      embedding: { endpoint: "http://fake/v1/embeddings", model: "f", dimensions: 3, batchSize: 32, apiKey: null },
+    });
+    const longContent = "слово ".repeat(2000); // ~12K chars — way past chunkSize
+    await runDedup(db, cfg, { content: longContent });
+    expect(embedInputLen).toBeGreaterThan(0);
+    expect(embedInputLen).toBeLessThanOrEqual(cfg.search.chunkSize * 2);
+  });
+});

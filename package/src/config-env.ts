@@ -13,6 +13,11 @@
  * Accepted lines: blank, `# comment`, `KEY=VALUE`, `export KEY=VALUE`.
  * A VALUE wrapped in matching single or double quotes is unwrapped (one
  * level, no escape processing — this is a config file, not a shell).
+ * An UNQUOTED value ends at ` #` — the inline-comment tail is stripped
+ * (dotenv convention; this bit a live operator: a comment after
+ * EMBEDDING_MODEL became part of the value, skewed the embedding
+ * fingerprint and triggered a needless full vault re-embed). A value that
+ * legitimately contains ` #` must be quoted.
  */
 
 import fs from "node:fs";
@@ -33,6 +38,11 @@ export function parseEnvFile(text: string): Record<string, string> {
       value.endsWith(value[0])
     ) {
       value = value.slice(1, -1);
+    } else {
+      // Unquoted value: strip the inline-comment tail (` #…`). Quoted values
+      // keep their `#` verbatim — quoting is the escape hatch.
+      const hash = value.indexOf(" #");
+      if (hash !== -1) value = value.slice(0, hash).trim();
     }
     out[m[1]] = value;
   }

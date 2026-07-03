@@ -116,8 +116,13 @@ function validateVaultPath(
   // through vault_read would defeat the privacy contract excludeFolders
   // is supposed to provide. Same "Document not found" wording as the
   // not-in-index branch so we don't reveal whether the path exists.
-  const firstSegment = segments[0] ?? "";
-  const excluded = config.excludeFolders.map((f) => f.normalize("NFD"));
+  // CASE-INSENSITIVE segment match (audit important): APFS/iCloud — the
+  // product's target platform — is case-insensitive, so «99_система/…»
+  // passed the exact-string guard, missed the index (system folders are
+  // never indexed) and fell into the direct-disk fallback, which happily
+  // read the real file. toLowerCase AFTER NFD on both sides.
+  const firstSegment = (segments[0] ?? "").toLowerCase();
+  const excluded = config.excludeFolders.map((f) => f.normalize("NFD").toLowerCase());
   if (excluded.includes(firstSegment)) {
     return { notFound: true, reason: `Document not found: ${docPath}` };
   }

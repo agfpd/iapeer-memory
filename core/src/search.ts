@@ -296,7 +296,15 @@ export async function runDedup(
   const linkThreshold = params.linkThreshold;
   const lower = linkThreshold !== undefined ? Math.min(linkThreshold, threshold) : threshold;
   const limit = Math.max(1, params.limit ?? 5);
-  const q = await embedQuery(params.content, config.embedding);
+  // Cap the embed input to the index contract (audit important): the index
+  // embeds ~chunkSize-char chunks, but dedup used to send the WHOLE note
+  // body as one input — a long canon note overflows a local embedder's
+  // context, and two such failures open the breaker shared with
+  // memory_search, silencing vector search for the whole team for 60s. The
+  // head window is the same evidence class as chunk[0]; a completeness loss
+  // on very long notes is acceptable for a hint mechanism.
+  const head = params.content.slice(0, config.search.chunkSize * 2);
+  const q = await embedQuery(head, config.embedding);
   if (!q.vector) return { enabled: true, matches: [] }; // embed failed / circuit-open → silent
   const raw = vectorSearch(db, q.vector, limit * 6); // headroom: canon filter + two bands
   const f = config.taxonomy.folders;
@@ -482,6 +490,15 @@ function applyStatusBoost(
     } else if (group === "pending") {
       multiplier = config.ranking.pendingPenalty;
     }
+    // Location-aware floor (audit important): «in the archive ⇒ stale» is a
+    // ONE-WAY invariant maintained by archiveStaleNotes — a note dragged into
+    // the archive by hand (Obsidian / bash mv) keeps `status: актуально` and
+    // got the ×activeBoost, ranking dead knowledge AS current truth. The
+    // FOLDER decides the ceiling: anything under the archive ranks with the
+    // stale penalty at best, however it got there.
+    if (item.path.split("/")[0] === config.taxonomy.folders.archive) {
+      multiplier = Math.min(multiplier, config.ranking.stalePenalty);
+    }
     return { ...item, score: item.score * multiplier };
   });
 }
@@ -532,14 +549,25 @@ async function applyReranker(
   if (!config.reranker) return { items, status: "ok" };
 
   const topK = Math.min(items.length, config.reranker.topK);
-  const candidates = items.slice(0, topK);
+  // Re-sort by the CURRENT score before slicing (audit important, adjacent):
+  // applyStatusBoost multiplies scores without re-ordering, and the BM25-only
+  // branch arrives in raw-rank order — the topK window must hold the best
+  // candidates AFTER the boost, or a boosted item is left in the tail.
+  const ordered = [...items].sort((a, b) => b.score - a.score);
+  const candidates = ordered.slice(0, topK);
 
-  // Build texts for reranking: use snippets or titles
+  // Body evidence for the cross-encoder, not the transit pipeline snippet
+  // (audit important): vector-found candidates carry an EMPTY snippet, so the
+  // reranker compared the query against a bare title and systematically sank
+  // pure-semantic hits — the exact channel the GPU pipeline exists for —
+  // below mediocre lexical matches. buildSnippet gives the same evidence
+  // class the final result snippet uses: the body window around the query
+  // terms, or the first real prose for a no-overlap semantic hit.
   const texts = candidates.map((item) => {
     const meta = getDocumentMeta(db, item.path);
     const title = meta?.title ?? item.path;
-    const snippet = item.snippet || "";
-    return `${title}\n${snippet}`.trim();
+    const body = item.snippet || buildSnippet(query, getChunkTexts(db, item.path), title);
+    return `${title}\n${body}`.trim();
   });
 
   const rerankResp = await rerank(query, texts, config.reranker);
@@ -567,10 +595,15 @@ async function applyReranker(
     };
   });
 
-  // Add remaining items (not reranked) with reduced scores
-  const remaining = items.slice(topK).map((item) => ({
+  // Add remaining items (not reranked) on the SAME scale as the reranked set
+  // (audit important): the raw pipeline score × 0.3 outranked every
+  // normalized (≤ 1.0) reranked item in BM25-only mode, where raw scores run
+  // 1.5–15 — the WORST tail candidates topped the final list exactly in the
+  // serve-first degradation window. Normalize by the same maxScore: the tail
+  // keeps only the fusion component and can never leapfrog the reranked set.
+  const remaining = ordered.slice(topK).map((item) => ({
     ...item,
-    score: item.score * 0.3, // Penalize items that didn't make it to reranking
+    score: (item.score / maxScore) * fusionWeight,
   }));
 
   return { items: [...reranked, ...remaining], status: "ok" };

@@ -115,6 +115,24 @@ describe("runRead — path validation", () => {
     expect(res.found).toBe(false);
     expect(res.error).toContain("Document not found");
   });
+
+  it("exclude match is CASE-INSENSITIVE — «99_система» cannot bypass the guard on APFS (audit important)", async () => {
+    const cfg = makeConfig({
+      vaultPath: vaultDir,
+      excludeFolders: ["99_Система"],
+    });
+    // On case-insensitive APFS the real folder answers to any case; the
+    // exact-string guard let the lowercase spelling fall through to the
+    // direct-disk fallback and leak the hidden file.
+    fs.mkdirSync(path.join(vaultDir, "99_Система"), { recursive: true });
+    fs.writeFileSync(path.join(vaultDir, "99_Система", "секрет.md"), "скрытое содержимое");
+
+    for (const attempt of ["99_система/секрет.md", "99_СИСТЕМА/секрет.md", "99_Система/секрет.md"]) {
+      const res = (await runRead(db, cfg, { path: attempt })) as { found: boolean; error: string };
+      expect(res.found).toBe(false);
+      expect(res.error).toContain("Document not found");
+    }
+  });
 });
 
 // ---- runRead — payload shape ----
