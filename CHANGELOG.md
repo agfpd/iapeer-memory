@@ -17,6 +17,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   README no longer calls the per-peer session surfaces "plugins", and the
   Russian integration doc gained parity for the pre-v1.2 manual-migration note.
 
+## [0.4.14] - 2026-07-03
+
+Remediation phase 7 (audit 2026-07-02): the curation belts and the sandbox
+belt — the silent-metadata-corruption class.
+
+### Fixed
+
+- **A human's needs_review clear persists**: the service-only guard used to
+  compare against the 6h-frozen curator-tick baseline — clearing the flag
+  after an agent's recent content edit was judged a content change, the
+  flag was forced back and the human landed in coauthors of a note they
+  never touched. The guard now receives the per-pass semantic baseline.
+- **Freshness is measured against the WRITE, not the observation**: a
+  hook-stamped edit seen late (sync-storm straggler, first event after
+  daemon downtime) was re-attributed to the human; |mtime − updated| within
+  the window now recognises «the stamp came with the content», however late
+  the daemon looks.
+- **fm-update round-trips conservatively**: constructs outside its model —
+  block scalars, nested maps, non-ASCII keys, zero-indent lists — are kept
+  as opaque raw entries serialised verbatim in place. A `--set status` pass
+  used to erase a note's whole block-scalar description. Only the true
+  orphan (`- value` with no open key — the sed-artifact class) is still
+  dropped.
+- **Balanced flow collections are not quoted into strings**: Obsidian
+  `aliases: [A, B]` survived as an array; a dangling `[` is still quoted.
+- **rename joined the sandbox belt**: guardedRenameSync asserts BOTH ends,
+  every renameSync call site converted, `fs.renameSync` added to the grep
+  invariant — a sandboxed daemon could physically MOVE live team notes into
+  the prod archive with the belt silent. memoryd also refuses to START
+  under the test sandbox over a production vault path.
+
 ## [0.4.13] - 2026-07-03
 
 Remediation phase 6 (audit 2026-07-02): the search/MCP layer — ranking
