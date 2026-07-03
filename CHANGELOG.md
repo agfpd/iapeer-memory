@@ -17,6 +17,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   README no longer calls the per-peer session surfaces "plugins", and the
   Russian integration doc gained parity for the pre-v1.2 manual-migration note.
 
+## [0.4.13] - 2026-07-03
+
+Remediation phase 6 (audit 2026-07-02): the search/MCP layer — ranking
+coherence and resilience.
+
+### Fixed
+
+- **Reranker tail on the same scale**: candidates outside topK kept their
+  raw pipeline score × 0.3 (raw FTS5 magnitudes run 1.5–15) against
+  normalized (≤ 1.0) reranked scores — in BM25-only mode (the routine
+  serve-first degradation window) the WORST candidates topped the final
+  list. The tail now normalizes by the same maxScore; the candidate window
+  is also re-sorted after the status boost.
+- **Body evidence for the reranker**: vector-found candidates carried an
+  empty pipeline snippet, so the cross-encoder compared the query against a
+  bare title and systematically sank pure-semantic hits; rerank texts now
+  build from the note's chunks (the same evidence the final snippet uses).
+- **The archive ranks as the archive**: a note moved into the archive by
+  hand keeps its active status and used to get the ×1.2 boost — the folder
+  now floors the multiplier at the stale penalty regardless of status.
+- **Dedup input capped** to 2 × chunkSize: whole-body embeds of long notes
+  overflowed local embedders and two failures opened the breaker shared
+  with memory_search — 60 s of silent BM25-only for the whole team.
+- **Case-insensitive exclude guard**: on case-insensitive APFS a
+  lowercase-spelled system folder bypassed the privacy filter and the
+  direct-disk fallback read the hidden file (latent — runRead is off the
+  MCP surface).
+- **config.env inline comments**: an unquoted value ends at ` #` (dotenv
+  convention) — a trailing comment no longer becomes part of the value;
+  quote the value to keep a literal `#`.
+
 ## [0.4.12] - 2026-07-03
 
 Remediation phase 5 (audit 2026-07-02): the embedding layer. (The fourth
