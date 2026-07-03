@@ -16,7 +16,7 @@ import { Database } from "bun:sqlite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
-import { startMemoryd, parsePersonalityFromIdentity, MEMORYD_SERVER_NAME, type MemorydHandle } from "../src/memoryd.js";
+import { startMemoryd, acquireMemorydLock, parsePersonalityFromIdentity, MEMORYD_SERVER_NAME, type MemorydHandle } from "../src/memoryd.js";
 import { formatStamp } from "../src/human-edit-detect.js";
 import type { CoreConfig } from "../src/config.js";
 import {
@@ -709,6 +709,269 @@ describe("memoryd.e2e — watch-loss degradation (audit critical #6)", () => {
       expect(found).toBe(true); // index stayed LIVE without fs.watch
     } finally {
       await h.close();
+    }
+  });
+});
+
+// ── memoryd batch (audit important): flush loss / shutdown flush / debounce
+// max-wait / single-writer lock / backfill dedup ─────────────────────────────
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+describe("memoryd.e2e — flush-loss / shutdown / storm / lock (audit important batch)", () => {
+  let btmp: string;
+  let bvault: string;
+
+  beforeAll(() => {
+    btmp = fs.mkdtempSync(path.join(os.tmpdir(), "iapeer-memory-batch-"));
+    bvault = path.join(btmp, "vault");
+    fs.mkdirSync(path.join(bvault, T.folders.knowledge), { recursive: true });
+  });
+
+  afterAll(() => {
+    fs.rmSync(btmp, { recursive: true, force: true });
+  });
+
+  function bconfig(sub: string, vaultPath = bvault): CoreConfig {
+    return {
+      ...makeConfig(),
+      vaultPath,
+      index: { dbPath: path.join(btmp, `${sub}.db`), fullScanOnStartup: true },
+    };
+  }
+
+  function bnote(vaultPath: string, title: string): void {
+    fs.writeFileSync(
+      path.join(vaultPath, T.folders.knowledge, `${title}.md`),
+      `---\ntitle: ${title}\nauthor: boris\ntype: ${T.types.knowledge}\nstatus: ${T.statusTokens.current}\n---\n\nТело: ${title}.\n`,
+      "utf-8",
+    );
+  }
+
+  function hasDoc(dbPath: string, title: string): boolean {
+    const sq = new Database(dbPath, { readonly: true });
+    try {
+      const row = sq
+        .prepare("SELECT COUNT(*) AS n FROM documents WHERE title = ?")
+        .get(title) as { n: number };
+      return row.n === 1;
+    } finally {
+      sq.close();
+    }
+  }
+
+  it("shutdown flush: close() inside the debounce window does not drop pending", async () => {
+    const dbPath = path.join(btmp, "shutdown.db");
+    const h = await startMemoryd({
+      config: bconfig("shutdown"),
+      emit: () => {},
+      mcpPort: null,
+      debounceMs: 60_000, // the debounce alone would NEVER fire in this test
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+    });
+    try {
+      bnote(bvault, "Предсмертная заметка");
+      await sleep(400); // fs.watch delivery → pending
+    } finally {
+      await h.close(); // pre-fix: pending silently dropped here
+    }
+    expect(hasDoc(dbPath, "Предсмертная заметка")).toBe(true);
+  });
+
+  it("debounce max-wait cap: a continuous event storm cannot defer flush forever", async () => {
+    const dbPath = path.join(btmp, "storm.db");
+    const h = await startMemoryd({
+      config: bconfig("storm"),
+      emit: () => {},
+      mcpPort: null,
+      debounceMs: 120,
+      debounceMaxWaitMs: 400,
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+    });
+    try {
+      // Events every 70ms (< debounceMs) for ~1.1s — pre-fix the timer reset
+      // on every event and flush never ran during the storm.
+      for (let i = 0; i < 16; i++) {
+        bnote(bvault, `Шторм ${i}`);
+        await sleep(70);
+      }
+      // Immediately after the last event: the 120ms debounce has NOT fired
+      // yet — only the cap can have flushed by now.
+      expect(hasDoc(dbPath, "Шторм 0")).toBe(true);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("vault unavailable at flush time: the changed set is re-queued and retried", async () => {
+    const rvault = path.join(btmp, "rvault");
+    fs.mkdirSync(path.join(rvault, T.folders.knowledge), { recursive: true });
+    const dbPath = path.join(btmp, "requeue.db");
+    const h = await startMemoryd({
+      config: bconfig("requeue", rvault),
+      emit: () => {},
+      mcpPort: null,
+      debounceMs: 250, // retry backoff base = 4× = 1s
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+    });
+    try {
+      bnote(rvault, "Ретрай заметка");
+      await sleep(150); // watch delivered, debounce still pending
+      fs.renameSync(rvault, `${rvault}-away`); // unmount window
+      await sleep(400); // debounce fired → flush → vault unavailable → re-queue
+      expect(hasDoc(dbPath, "Ретрай заметка")).toBe(false); // and NOT lost silently…
+      fs.renameSync(`${rvault}-away`, rvault); // vault back
+      // …the bounded-backoff retry replays the pass without any new fs event.
+      let found = false;
+      for (let i = 0; i < 40 && !found; i++) {
+        await sleep(100);
+        found = hasDoc(dbPath, "Ретрай заметка");
+      }
+      expect(found).toBe(true);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("single-writer lock: a second memoryd on the same DB dir refuses while the first lives", async () => {
+    const h1 = await startMemoryd({
+      config: bconfig("lock1"),
+      emit: () => {},
+      mcpPort: null,
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+    });
+    try {
+      // Same dbDir (btmp) → same lock. The lock is FRESH (heartbeat touch).
+      await expect(
+        startMemoryd({
+          config: bconfig("lock2"),
+          emit: () => {},
+          mcpPort: null,
+          logger: { info: () => {}, warn: () => {}, error: () => {} },
+        }),
+      ).rejects.toThrow(/another memoryd/);
+    } finally {
+      await h1.close();
+    }
+    // Graceful close released the lock — the next writer starts freely.
+    const h2 = await startMemoryd({
+      config: bconfig("lock3"),
+      emit: () => {},
+      mcpPort: null,
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+    });
+    await h2.close();
+  });
+
+  it("acquireMemorydLock: pidAlive probe decides — live owner refuses, dead owner is taken over", () => {
+    const lp = path.join(btmp, "probe.lock");
+    fs.writeFileSync(lp, "424242\n");
+    expect(() => acquireMemorydLock(lp, { pidAlive: () => true })).toThrow(/another memoryd/);
+    const release = acquireMemorydLock(lp, { pidAlive: () => false }); // crashed owner
+    expect(fs.readFileSync(lp, "utf-8").trim()).toBe(String(process.pid));
+    release();
+    expect(fs.existsSync(lp)).toBe(false);
+  });
+
+  it("acquireMemorydLock: mtime fallback — a fresh lock refuses, a stale one is swept", () => {
+    const lp = path.join(btmp, "mtime.lock");
+    fs.writeFileSync(lp, "999999\n"); // fresh mtime = owner presumed alive
+    expect(() => acquireMemorydLock(lp)).toThrow(/another memoryd/);
+    const old = new Date(Date.now() - 10 * 60_000);
+    fs.utimesSync(lp, old, old); // a crashed owner stops touching the lock
+    const release = acquireMemorydLock(lp);
+    release();
+  });
+});
+
+describe("memoryd.e2e — flush does not drain the embed queue during backfill (audit important)", () => {
+  it("runDetectPass during a blocked backfill returns without embedding; the backfill drains everything after", async () => {
+    const etmp = fs.mkdtempSync(path.join(os.tmpdir(), "iapeer-memory-embedgate-"));
+    const evault = path.join(etmp, "vault");
+    fs.mkdirSync(path.join(evault, T.folders.knowledge), { recursive: true });
+    const dbPath = path.join(etmp, "embed.db");
+    for (let i = 0; i < 3; i++) {
+      fs.writeFileSync(
+        path.join(evault, T.folders.knowledge, `Нота ${i}.md`),
+        `---\ntitle: Нота ${i}\nauthor: boris\ntype: ${T.types.knowledge}\nstatus: ${T.statusTokens.current}\n---\n\nТело ${i}.\n`,
+        "utf-8",
+      );
+    }
+
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((r) => (releaseGate = r));
+    let fetchCalls = 0;
+    const realFetch = globalThis.fetch;
+    // A fetch stub that BLOCKS the first (and every) embed batch on the gate —
+    // freezing the backfill mid-flight so the test can flush "during" it.
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      fetchCalls++;
+      await gate;
+      const batch = (JSON.parse(String(init?.body)) as { input: string[] }).input;
+      return new Response(
+        JSON.stringify({ data: batch.map(() => ({ embedding: [0.1, 0.2, 0.3] })) }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    let h: MemorydHandle | null = null;
+    try {
+      h = await startMemoryd({
+        config: {
+          ...makeConfig(),
+          vaultPath: evault,
+          index: { dbPath, fullScanOnStartup: true },
+          embedding: {
+            endpoint: "http://127.0.0.1:1/v1/embeddings",
+            model: "test-embedder",
+            dimensions: 3,
+            batchSize: 2,
+            apiKey: null,
+          },
+        },
+        emit: () => {},
+        mcpPort: null,
+        debounceMs: 40,
+        logger: { info: () => {}, warn: () => {}, error: () => {} },
+      });
+      // Serve-first: the port is conceptually up, the backfill has issued its
+      // first batch and hangs on the gate.
+      await sleep(200);
+      expect(fetchCalls).toBe(1);
+
+      // A flush mid-backfill: pre-fix it drained the WHOLE global queue
+      // inline (second fetch + the flush chain blocked on the gate forever).
+      fs.writeFileSync(
+        path.join(evault, T.folders.knowledge, "Во время бэкфилла.md"),
+        `---\ntitle: Во время бэкфилла\nauthor: boris\ntype: ${T.types.knowledge}\nstatus: ${T.statusTokens.current}\n---\n\nНовое тело.\n`,
+        "utf-8",
+      );
+      await sleep(150); // fs.watch delivery
+      await h.runDetectPass(); // must resolve with the gate still CLOSED
+      expect(fetchCalls).toBe(1); // no inline drain — one owner of the queue
+
+      releaseGate();
+      // The backfill loop re-queries until empty — including the new note's
+      // chunks that the structural flush upserted with NULL embeddings.
+      let missing = -1;
+      for (let i = 0; i < 50 && missing !== 0; i++) {
+        await sleep(100);
+        const sq = new Database(dbPath, { readonly: true });
+        try {
+          missing = (
+            sq.prepare("SELECT COUNT(*) AS n FROM chunks WHERE embedding IS NULL").get() as {
+              n: number;
+            }
+          ).n;
+        } finally {
+          sq.close();
+        }
+      }
+      expect(missing).toBe(0);
+    } finally {
+      globalThis.fetch = realFetch;
+      if (h) await h.close();
+      fs.rmSync(etmp, { recursive: true, force: true });
     }
   });
 });

@@ -651,6 +651,15 @@ export type MemorydOptions = {
   /** Human owner name; human-edit detection is OFF when absent (⚖7). */
   humanName?: string | null;
   freshEditWindowS?: number;
+  /** Upper bound on debounce coalescing, ms: a continuous event storm must
+   *  not defer flush forever. Default 10 × debounceMs. */
+  debounceMaxWaitMs?: number;
+  /** Single-writer lock file; default `<db dir>/memoryd.lock`. */
+  lockPath?: string;
+  /** Liveness probe for the pid recorded in an existing lock (the package
+   *  passes an egress-based `ps` probe). Absent → mtime staleness decides
+   *  (the daemon touches the lock on every heartbeat tick). */
+  lockPidAlive?: (pid: number) => boolean;
   /** Poll period while fs.watch is DOWN (degraded mode), ms. Default 5 min. */
   watchFallbackMs?: number;
   /** Belt-pass period while fs.watch is UP (insurance against silently dead
@@ -705,6 +714,66 @@ export type MemorydHandle = {
 };
 
 /**
+ * Single-writer lock (audit important: no single-instance guard). memoryd is
+ * the SOLE SQLite writer and the sole owner of the `.memoryd.tmp` rename
+ * paths — a second instance on the same vault/DB means two writers racing
+ * one tmp file (torn notes on disk), SQLITE_BUSY swallowed as «skip file»,
+ * and double curator ticks. O_EXCL + pid inside; liveness of an existing
+ * owner is decided by the caller-supplied probe when given (the package
+ * passes an egress `ps` probe — precise, immediate takeover after a crash),
+ * else by lock mtime staleness (the daemon touches the lock on every
+ * heartbeat tick, so a live owner's lock is always fresh).
+ *
+ * Returns a release function. Throws (loudly, with the owner pid) when a
+ * LIVE owner holds the lock — refusing the second writer is the point.
+ */
+export function acquireMemorydLock(
+  lockPath: string,
+  opts: { pidAlive?: (pid: number) => boolean; staleMs?: number } = {},
+): () => void {
+  const staleMs = opts.staleMs ?? 120_000;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = fs.openSync(lockPath, "wx");
+      fs.writeSync(fd, `${process.pid}\n`);
+      fs.closeSync(fd);
+      return () => {
+        try {
+          guardedUnlinkSync(lockPath);
+        } catch {
+          // best effort — a stale lock is detected on the next acquire
+        }
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== "EEXIST") throw err;
+      let ownerPid = NaN;
+      let mtimeMs = 0;
+      try {
+        ownerPid = Number(fs.readFileSync(lockPath, "utf-8").trim());
+        mtimeMs = fs.statSync(lockPath).mtimeMs;
+      } catch {
+        // unreadable/vanished between EEXIST and read — treat as stale, retake
+      }
+      const ownerAlive = opts.pidAlive
+        ? Number.isInteger(ownerPid) && ownerPid > 1 && opts.pidAlive(ownerPid)
+        : Date.now() - mtimeMs < staleMs;
+      if (ownerAlive) {
+        throw new Error(
+          `another memoryd (pid ${ownerPid || "unknown"}) holds ${lockPath} — ` +
+            "refusing a second writer on the same vault/DB; stop it first (iapeer-memory uninstall stops by pid file)",
+        );
+      }
+      try {
+        guardedUnlinkSync(lockPath); // stale lock from a crashed owner
+      } catch {
+        // someone else may have swept it — the retake attempt decides
+      }
+    }
+  }
+  throw new Error(`could not acquire ${lockPath} after clearing a stale lock — giving up`);
+}
+
+/**
  * Whether a note's frontmatter already carries a non-empty `author`. The
  * first-sight guard uses it to tell a SETTLED note (has author — never
  * re-stamp it at startup) from a genuinely NEW one (a human's bare-body canon
@@ -752,6 +821,13 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
   // update. While the backfill catches up, search degrades to BM25-only for
   // not-yet-embedded chunks (search.ts graceful degradation) and gains vectors
   // as they fill in.
+  // Single-writer lock BEFORE the database opens (audit important): a second
+  // memoryd on the same vault/DB must die here, not after it has already run
+  // a full indexAll as a second writer.
+  const lockPath = opts.lockPath ?? path.join(dbDir, "memoryd.lock");
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  const releaseLock = acquireMemorydLock(lockPath, { pidAlive: opts.lockPidAlive });
+
   const db = openDatabase(config, { migrateVecDimension: true });
   checkEmbeddingModelChanged(db, config.embedding);
   checkParserChanged(db, PARSER_VERSION);
@@ -1138,6 +1214,22 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
   const pending = new Set<string>();
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let flushing: Promise<void> = Promise.resolve();
+  /** Oldest un-flushed event of the current debounce series — feeds the
+   *  max-wait cap (a storm must not defer flush forever). */
+  let firstPendingAt: number | null = null;
+  const debounceMaxWaitMs = opts.debounceMaxWaitMs ?? debounceMs * 10;
+  /** Retry contour for a LOST pass (vault unavailable / pass error):
+   *  schedule() re-arms only on NEW fs events, so a re-queued set needs its
+   *  own timer. Backoff is bounded — a long unmount must not spin hot. */
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryBackoffMs = 0;
+  /** While the background embed backfill is draining the global
+   *  NULL-embedding queue, flush must not embed inline (double work +
+   *  the flush chain would block on the whole backlog). Also true during
+   *  shutdown: the final flush is structural-only, embeddings resume next
+   *  start (the backfill is restart-safe). */
+  let backfillActive = config.embedding != null;
+  let shuttingDown = false;
 
   /**
    * needs_review CLOSURE (Release 3, inv 3/5/7): when the Index — the finalizer —
@@ -1194,35 +1286,83 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
   async function flush(): Promise<void> {
     const changed = new Set(pending);
     pending.clear();
+    firstPendingAt = null;
 
-    if (!vaultAvailable()) return;
+    // A LOST pass must not eat the changed set (audit important: pending was
+    // cleared before the work). The detect belts (stamping, archival,
+    // needs_review) run ONLY off this set — re-queue and retry with bounded
+    // backoff. Baselines are untouched here, so the retry judges the same
+    // edits correctly.
+    const requeue = (why: string): void => {
+      for (const p of changed) pending.add(p);
+      retryBackoffMs = Math.min(retryBackoffMs ? retryBackoffMs * 2 : debounceMs * 4, 5 * 60_000);
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        flushing = flushing.then(() => flush()).catch((err) => {
+          logger.error(`retry pass failed: ${String(err)}`);
+        });
+      }, retryBackoffMs);
+      retryTimer.unref?.();
+      logger.warn(
+        `flush deferred (${why}) — ${changed.size} path(s) re-queued, retry in ${retryBackoffMs}ms`,
+      );
+    };
 
-    // Per-pass prev smart-hash (needs_review closure, Release 3): snapshot the
-    // silentStamps baseline BEFORE silentEditPass advances it, so curatorClearPass
-    // can tell whether THIS pass's edit MOVED the semantic hash (real curation →
-    // auto-clear) or not (service-only → leave the flag).
-    const prevSmart = new Map<string, string>();
-    for (const abs of changed) {
-      const rec = silentStamps.get(path.relative(config.vaultPath, abs));
-      if (rec) prevSmart.set(abs, rec.hash);
+    if (!vaultAvailable()) {
+      requeue("vault unavailable");
+      return;
     }
 
-    // Unstamped detector FIRST (design §3 order): re-stamps land before
-    // humanEditPass judges (a re-stamped file then reads `last_edited_by:
-    // unstamped` and humanEditPass sees a fresh agent stamp → echo-agent
-    // skip, no double stamp — order instead of ifs). Candidates are the
-    // fs.watch changed set; service-only echoes never reach the rule
-    // (smart-hash blindness = echo safety of our own re-stamp).
-    silentEditPass(changed);
+    try {
+      // Per-pass prev smart-hash (needs_review closure, Release 3): snapshot the
+      // silentStamps baseline BEFORE silentEditPass advances it, so curatorClearPass
+      // can tell whether THIS pass's edit MOVED the semantic hash (real curation →
+      // auto-clear) or not (service-only → leave the flag).
+      const prevSmart = new Map<string, string>();
+      for (const abs of changed) {
+        const rec = silentStamps.get(path.relative(config.vaultPath, abs));
+        if (rec) prevSmart.set(abs, rec.hash);
+      }
 
-    humanEditPass(changed);
-    curatorClearPass(changed, prevSmart); // needs_review closure: Index curation auto-clears the flag
-    archiveStaleNotes(changed); // lean §2.2a — stale → archive before reindex
-    syncTagsMirror();
-    await indexAll({ db, config, logger }); // incremental by content hash
-    renderFleetFragments("vault-change"); // docs/05: свежесть за секунды
-    // Canon edits are NOT emitted instantly — they accumulate to the curator
-    // tick (cadence 6h); see runCuratorTick.
+      // Unstamped detector FIRST (design §3 order): re-stamps land before
+      // humanEditPass judges (a re-stamped file then reads `last_edited_by:
+      // unstamped` and humanEditPass sees a fresh agent stamp → echo-agent
+      // skip, no double stamp — order instead of ifs). Candidates are the
+      // fs.watch changed set; service-only echoes never reach the rule
+      // (smart-hash blindness = echo safety of our own re-stamp).
+      silentEditPass(changed);
+
+      humanEditPass(changed);
+      curatorClearPass(changed, prevSmart); // needs_review closure: Index curation auto-clears the flag
+      archiveStaleNotes(changed); // lean §2.2a — stale → archive before reindex
+      syncTagsMirror();
+      // embed:false while the background backfill drains the global queue
+      // (audit important: indexAll's inline embed pass takes the WHOLE
+      // NULL-embedding queue — a single edit would block the flush chain on
+      // the entire backlog AND double-embed every batch the backfill also
+      // selects). A changed note's new chunks land in the same queue and the
+      // backfill drains them. Same for shutdown: structural-only, the
+      // restart-safe backfill resumes next start.
+      await indexAll({
+        db,
+        config,
+        logger,
+        embed: backfillActive || shuttingDown ? false : undefined,
+      }); // incremental by content hash
+      renderFleetFragments("vault-change"); // docs/05: свежесть за секунды
+      retryBackoffMs = 0;
+      if (retryTimer) {
+        // A pending retry is moot — this pass covered the re-queued set too.
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+      // Canon edits are NOT emitted instantly — they accumulate to the curator
+      // tick (cadence 6h); see runCuratorTick.
+    } catch (err) {
+      logger.error(`detect pass failed: ${String(err)}`);
+      requeue("pass error");
+    }
   }
 
   /** CURATOR_TICK — one cadence pass: diff canon + agent memory against the
@@ -1255,7 +1395,21 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
 
   function schedule(absPath: string): void {
     pending.add(absPath);
+    const now = Date.now();
+    if (firstPendingAt === null) firstPendingAt = now;
     if (flushTimer) clearTimeout(flushTimer);
+    // Max-wait cap (audit important: debounce without an upper bound): an
+    // event storm with gaps < debounceMs (iCloud sync, bulk migration) resets
+    // the timer forever — search would serve a stale index for the whole
+    // storm and the eventual giant pass would be a single point of loss.
+    // Once the OLDEST pending event has waited debounceMaxWaitMs, flush now.
+    if (now - firstPendingAt >= debounceMaxWaitMs) {
+      flushTimer = null;
+      flushing = flushing.then(() => flush()).catch((err) => {
+        logger.error(`detect pass failed: ${String(err)}`);
+      });
+      return;
+    }
     flushTimer = setTimeout(() => {
       flushTimer = null;
       flushing = flushing.then(() => flush()).catch((err) => {
@@ -1361,6 +1515,14 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
     } catch (err) {
       logger.error(`heartbeat write failed: ${String(err)}`);
     }
+    try {
+      // Keep the single-writer lock FRESH: the mtime-staleness fallback of
+      // acquireMemorydLock reads this as «the owner is alive».
+      const now = new Date();
+      fs.utimesSync(lockPath, now, now);
+    } catch {
+      // lock vanished (manual sweep) — the next acquire will sort it out
+    }
   }
   touchHeartbeat();
   const heartbeatTimer = setInterval(() => {
@@ -1397,7 +1559,26 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
       logger.error(`hash-state persist failed: ${String(err)}`);
     }
   }
-  const persistTimer = setInterval(persistQuiet, persistMs);
+  // silentStamps used to persist only on the 6h curator tick + graceful
+  // close — a non-graceful death lost up to 6h of stamp baselines, and the
+  // first-sight warm-up then skipped real silent edits unjudged (audit
+  // important, FSWatcher finding). Ride the same 60s cadence as the hashes,
+  // change-gated so the no-op case stays a JSON.stringify.
+  let lastBatchJson: string | null = null;
+  function persistBatchesQuiet(): void {
+    try {
+      const json = JSON.stringify([[...permanentBaseline], [...silentStamps]]);
+      if (json === lastBatchJson) return;
+      persistBatches();
+      lastBatchJson = json;
+    } catch (err) {
+      logger.error(`batch-state persist failed: ${String(err)}`);
+    }
+  }
+  const persistTimer = setInterval(() => {
+    persistQuiet();
+    persistBatchesQuiet();
+  }, persistMs);
   persistTimer.unref?.();
 
   // ── cadence timer (директива ~15:31): первый прогон через полный период
@@ -1442,6 +1623,10 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
       }
     } catch (err) {
       logger.error(`iapeer-memory: background embed backfill failed: ${String(err)}`);
+    } finally {
+      // From here on the global NULL-embedding queue has a single owner
+      // again — flush embeds its changed notes inline as before.
+      backfillActive = false;
     }
   })();
   backfillTask.catch(() => {}); // unhandled-rejection guard (errors handled within)
@@ -1462,14 +1647,26 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
       await flush();
     },
     close: async () => {
+      shuttingDown = true; // shutdown flush is structural-only (embed:false)
       watcher?.close();
       if (pollTimer) clearInterval(pollTimer);
       backfillStopping = true; // bail the background embed loop at its next batch
       await backfillTask; // batches are atomic — await ensures no torn write
       if (flushTimer) clearTimeout(flushTimer);
+      if (retryTimer) clearTimeout(retryTimer);
       clearInterval(heartbeatTimer);
       clearInterval(curatorTimer);
       clearInterval(persistTimer);
+      // Shutdown flush — the handle contract always promised it, close()
+      // never ran it (audit important): a SIGTERM inside the debounce window
+      // (the typical update flow: a burst of edits, then restart a second
+      // later) must not drop the pending set — the detect belts run only off
+      // it, and the notes would go unjudged until the NEXT touch.
+      if (pending.size > 0) {
+        flushing = flushing.then(() => flush()).catch((err) => {
+          logger.error(`shutdown flush failed: ${String(err)}`);
+        });
+      }
       await flushing;
       persistQuiet();
       // Batch state (silentStamps + the permanent baseline) also persists on
@@ -1484,6 +1681,7 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
         // best effort
       }
       db.close();
+      releaseLock();
     },
   };
 }

@@ -20,8 +20,10 @@ import fs from "node:fs";
 import { configFromEnv, startMemoryd, resolveMode, curationPlan } from "@agfpd/iapeer-memory-core";
 import { authorIndexPath, memoryPaths } from "../paths.js";
 import { guardedWriteFileSync, guardedUnlinkSync } from "@agfpd/iapeer-memory-core";
+import type { Egress } from "../egress.js";
+import { pidLooksLikeOurs } from "./uninstall.js";
 
-export async function cmdMemoryd(argv: string[]): Promise<number> {
+export async function cmdMemoryd(argv: string[], egress: Egress): Promise<number> {
   let mcpPort: number | undefined;
   let noMcp = false;
   let human: string | null = null;
@@ -66,9 +68,6 @@ export async function cmdMemoryd(argv: string[]): Promise<number> {
   for (const dir of [paths.stateDir, paths.cacheDir, paths.logsDir]) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  // pid file — uninstall's stop handle (best-effort; stale files are
-  // harmless: the reader checks liveness before signalling).
-  guardedWriteFileSync(paths.pidPath, `${process.pid}\n`);
 
   const freshEditWindowRaw = process.env.IAPEER_MEMORY_FRESH_EDIT_WINDOW_S;
   const freshEditWindowS =
@@ -86,6 +85,11 @@ export async function cmdMemoryd(argv: string[]): Promise<number> {
     humanName: human ?? process.env.IAPEER_MEMORY_HUMAN_NAME ?? null,
     freshEditWindowS,
     mcpPort: noMcp ? null : mcpPort,
+    // Single-writer lock liveness (audit important: no single-instance
+    // guard): the egress `ps` probe both checks the recorded pid is alive
+    // AND that it is actually a memoryd — the recycled-pid class stays
+    // closed. A crashed owner is taken over immediately, a live one refuses.
+    lockPidAlive: (pid) => pidLooksLikeOurs(egress, pid),
     // Per-peer fragment rendering (docs/05): the package owns
     // the ecosystem joint — fleet-map path + paths-block facts; core
     // renders at startup, on vault changes and on fleet-map changes.
@@ -104,6 +108,13 @@ export async function cmdMemoryd(argv: string[]): Promise<number> {
       projectsRoot: process.env.IAPEER_MEMORY_PROJECTS_ROOT || undefined,
     },
   });
+
+  // pid file — uninstall's stop handle. Written AFTER startMemoryd succeeds
+  // (audit important): a second instance dying at the single-writer lock (or
+  // at EADDRINUSE) must not have already clobbered the pid file of the LIVE
+  // first instance — that stale overwrite broke stopMemorydByPidFile for
+  // update/uninstall.
+  guardedWriteFileSync(paths.pidPath, `${process.pid}\n`);
 
   return await new Promise<number>((resolve) => {
     let closing = false;

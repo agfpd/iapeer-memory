@@ -157,7 +157,7 @@ export async function main(argv: string[]): Promise<number> {
     case "render":
       return cmdRender(rest);
     case "memoryd":
-      return cmdMemoryd(rest);
+      return cmdMemoryd(rest, egress);
     case "hook":
       return cmdHook(rest, egress);
     default:
