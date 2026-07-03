@@ -17,6 +17,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   README no longer calls the per-peer session surfaces "plugins", and the
   Russian integration doc gained parity for the pre-v1.2 manual-migration note.
 
+## [0.4.8] - 2026-07-03
+
+Remediation phase 1 of the 2026-07-02 full-codebase audit: all seven
+confirmed-critical findings fixed at the root layer, each with regression
+tests. Ships together with the serve-first memoryd startup (`c07d152`).
+
+### Fixed
+
+- **Eviction ≠ deletion** (audit #2): the indexer registers a note as existing
+  from its readdir entry (a read failure no longer counts as "deleted"),
+  legacy `.icloud` placeholders count as existing, an aborted or empty scan
+  never reaches stale-document deletion, and a mass-delete fuse (>10 files AND
+  >20% of the corpus at once) refuses an iCloud-partial-sync wipe unless
+  `IAPEER_MEMORY_ALLOW_MASS_DELETE=1`.
+- **Watch-loss degradation** (audit #6): a dead `fs.watch` (start-time or a
+  runtime `'error'` — previously an uncaught crash) degrades to a polling
+  pass (5 min) instead of freezing the index and renders forever; a slow belt
+  pass (60 min) insures against silently dead FSEvents; the heartbeat file
+  carries `watch=on|off` and `verify` FAILS a fresh-but-degraded daemon.
+- **Indexing embed timeout** (audit #3): batch embedding runs on its own
+  per-batch timeout (`IAPEER_MEMORY_EMBEDDING_TIMEOUT_MS`, default 60 s)
+  instead of the 3 s query default that aborted every batch on a slow local
+  endpoint; interactive queries keep the strict 3 s.
+- **vec_chunks orphan race** (audit #1): an embed batch returning after its
+  note was re-indexed no longer writes a vector under a dead rowid; a one-shot
+  GC at writer startup sweeps orphans accumulated pre-fix.
+- **Separator-only query tokens** (audit #4): a standalone «—»/«→»/emoji token
+  no longer reaches FTS5 as a zero-term phrase (build-dependent zeroing
+  semantics); snippet highlighting stays consistent with the FTS terms.
+- **Zero-indent YAML lists** (audit #5): `stripEmptyArrays` no longer deletes
+  a `tags:` key above zero-indent items (orphaned items = broken frontmatter =
+  the note silently out of the index); one shared item recogniser across
+  `parseListField` / `removeListField` / the tags gate.
+- **Sandbox egress hole in `uninstall`** (audit #7): the `iapeerBin` default
+  is gone — a defined value is an explicit-binary egress authorization, so the
+  old `"iapeer"` fallback let sandboxed tests send LIVE trigger unregisters to
+  the production notifier.
+
+### Added
+
+- Serve-first memoryd startup: the structural index, MCP port and heartbeat
+  come up immediately; the (potentially whole-vault) embedding pass runs as a
+  restart-safe background backfill.
+
 ## [0.4.4] - 2026-06-20
 
 ### Removed
