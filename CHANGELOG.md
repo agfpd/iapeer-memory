@@ -11,6 +11,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.17] - 2026-07-03
+
+Two provisioning/operations defects, both owner-observed the same day.
+
+### Fixed
+
+- **memoryd/core**: the 6h curator tick survives restarts. The cadence
+  timer was `setInterval` from process start, in memory only — every
+  memoryd recycle (the notifier watcher relaunches the daemon on each
+  foundation deploy) reset the countdown; a deploy-dense day starved
+  curation entirely (live: ≈40h without a single `CURATOR_TICK`, heartbeat
+  green). The wall-clock anchor `lastCuratorTickAt` now rides
+  `memoryd.batches.json`: a restart mid-period sleeps only the remainder,
+  an overdue anchor fires a catch-up tick after a short floor delay
+  (period/20, capped at 60s) instead of waiting another full period, and a
+  vault-unavailable skip re-checks at the floor without hot-looping.
+- **package**: role peers (index/scriber/dreamweaver) are never nameless
+  in `iapeer list`. init created them without a `--description`, so the
+  registry field stayed empty on every fresh install. Now: one canonical
+  per-role description (en/ru, single source in the templates module) is
+  passed at `iapeer create`; a pre-existing role peer with an EMPTY
+  registry description is backfilled via the core's sanctioned
+  re-provision (`create --path <cwd> --description`, В36 — local profile
+  AND registry row; doctrine no-clobber; an operator-tuned description is
+  never overwritten); `verify` grows a `role-descriptions` check whose
+  `--repair` re-asserts the canonical text.
+
 ## [0.4.16] - 2026-07-03
 
 Remediation phase 9 (audit 2026-07-02): the cosmetic batch — the final
