@@ -17,7 +17,7 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "prepack": "bun src/sync-docs.ts && cp ../LICENSE LICENSE",
-    "preversion": "bun run test && bun run typecheck",
+    "preversion": "test -z \"$(git -C .. status --porcelain)\" || { echo 'release: working tree is dirty — commit or stash BEFORE the bump (git add -A would launder the dirt into the release commit)' >&2; exit 1; } && bun run test && bun run typecheck",
     "version": "bun src/sync-versions.ts && git add -A ..",
     "release": "npm version patch --workspaces-update=false && npm run release:finish",
     "release:minor": "npm version minor --workspaces-update=false && npm run release:finish",

@@ -15,6 +15,7 @@ import {
   gateHasWork,
   batchTasks,
   claudeProjectSlug,
+  envNumber,
   type CollectedFolder,
   type CollectIo,
 } from "../src/commands/dream-collect.js";
@@ -330,5 +331,26 @@ describe("batchTasks — Q3 rule", () => {
     );
     expect(tasks.map((t) => t.kind)).toEqual(["folder", "grouped"]);
     expect(tasks[1]!.folders.map((f) => f.agent)).toEqual(["a", "b"]);
+  });
+});
+
+describe("envNumber — the documented «0 = uncapped» switch (audit important)", () => {
+  const KEY = "IAPEER_MEMORY_TEST_ENVNUMBER";
+  afterEach(() => {
+    delete process.env[KEY];
+  });
+
+  it("strict mode (the other dream knobs): 0 falls back — zero is meaningless there", () => {
+    process.env[KEY] = "0";
+    expect(envNumber(KEY, 20)).toBe(20);
+  });
+
+  it("allowZero (TRANSCRIPT_CAP): 0 passes through — the OFF switch docs and config.env promise", () => {
+    process.env[KEY] = "0";
+    expect(envNumber(KEY, 20, { allowZero: true })).toBe(0);
+    process.env[KEY] = "7";
+    expect(envNumber(KEY, 20, { allowZero: true })).toBe(7);
+    process.env[KEY] = "-1";
+    expect(envNumber(KEY, 20, { allowZero: true })).toBe(20); // negatives still refused
   });
 });

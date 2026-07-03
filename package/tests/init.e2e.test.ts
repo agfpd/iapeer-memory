@@ -58,6 +58,27 @@ describe("init (local half, sandboxed)", () => {
     expect(fs.existsSync(path.join(tmp, "config.env"))).toBe(false);
   });
 
+  it("re-init with a DIFFERENT --vault than the host runs with → refusal exit 2 (split-brain guard)", () => {
+    // The runtime resolves the vault from config.env/env; doctrines and the
+    // host guide render from --vault. A mismatch would send peers writing
+    // into a vault nobody indexes (audit important) — init must refuse.
+    const oldVault = path.join(tmp, "old-vault");
+    fs.mkdirSync(oldVault, { recursive: true });
+    const r = runCli(["init", "--vault", path.join(tmp, "new-vault"), "--locale", "en", ...LOCAL_FLAGS], {
+      IAPEER_MEMORY_VAULT_PATH: oldVault,
+    });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("split-brain");
+    expect(r.stderr).toContain(oldVault); // the recipe names the effective vault
+    expect(fs.existsSync(path.join(tmp, "new-vault"))).toBe(false); // no step ran
+
+    // Same path (even via a symlink-free resolve) → proceeds normally.
+    const same = runCli(["init", "--vault", oldVault, "--locale", "en", ...LOCAL_FLAGS], {
+      IAPEER_MEMORY_VAULT_PATH: oldVault,
+    });
+    expect(same.exitCode).toBe(0);
+  });
+
   it("flag-driven run provisions vault+config+templates+slot+guide, exit 0", () => {
     const vault = path.join(tmp, "vault");
     const r = runCli(["init", "--vault", vault, "--locale", "ru", "--human", "arthur", ...LOCAL_FLAGS]);

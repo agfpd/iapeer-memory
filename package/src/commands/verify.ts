@@ -45,14 +45,79 @@ import {
   registerTimer,
   registerWatcher,
   resolveRegistrantRuntime,
+  unregisterTimer,
   writeDreamGateScript,
   writeLauncherScript,
   WATCHER_TRIGGER_ID,
 } from "../watcher.js";
 import { paintStatus, ui } from "../ui.js";
+import { pidLooksLikeOurs } from "./uninstall.js";
+import { guardedUnlinkSync } from "@agfpd/iapeer-memory-core";
 
 /** Heartbeat default is 30s (core memoryd) — 4 missed beats = stale. */
 export const DEFAULT_HEARTBEAT_STALE_MS = 120_000;
+
+/**
+ * Terminate a HUNG memoryd so the notifier's exit-detection can relaunch it
+ * (audit important: the watcher.ts contract «hung silently is covered by our
+ * file heartbeat + verify — no gap» was documented but never implemented —
+ * repair only PRINTED the stale warning).
+ *
+ * Escalation is mandatory, not optional: a stale heartbeat under a LIVE
+ * process almost certainly means a blocked event loop, and memoryd installs
+ * its own SIGTERM handler — a handler that will never run replaced the
+ * default disposition, so SIGTERM alone cannot kill the hung daemon.
+ * SIGTERM → grace → SIGKILL. The pid file is removed only after CONFIRMED
+ * death — losing it while the deadlocked process lives would strand the next
+ * repair without a handle. Verified-kill contract holds: the pid's command
+ * line is checked (ps) before any signal.
+ */
+function terminateHungMemoryd(
+  egress: Egress,
+  pidPath: string,
+): { done: boolean; detail: string } {
+  let pid = NaN;
+  try {
+    pid = Number(fs.readFileSync(pidPath, "utf-8").trim());
+  } catch {
+    return { done: false, detail: "no pid file — cannot signal; manual: iapeer-memory memoryd" };
+  }
+  if (!Number.isInteger(pid) || pid <= 1 || !pidLooksLikeOurs(egress, pid)) {
+    return {
+      done: false,
+      detail: `pid file does not point at a live memoryd (${pid}) — nothing to terminate; manual: iapeer-memory memoryd`,
+    };
+  }
+  const waitDead = (graceMs: number): boolean => {
+    const until = Date.now() + graceMs;
+    while (Date.now() < until) {
+      if (!pidLooksLikeOurs(egress, pid)) return true;
+      Bun.sleepSync(250);
+    }
+    return !pidLooksLikeOurs(egress, pid);
+  };
+  egress.kill(pid, "SIGTERM");
+  let how = "SIGTERM";
+  if (!waitDead(5_000)) {
+    egress.kill(pid, "SIGKILL");
+    how = "SIGKILL after a 5s SIGTERM grace";
+    if (!waitDead(2_000)) {
+      return {
+        done: false,
+        detail: `memoryd (pid ${pid}) survived SIGKILL — pid file kept; inspect manually`,
+      };
+    }
+  }
+  try {
+    guardedUnlinkSync(pidPath); // only after confirmed death
+  } catch {
+    // best effort — a stale pid file is harmless (readers check liveness)
+  }
+  return {
+    done: true,
+    detail: `hung memoryd (pid ${pid}) terminated via ${how} — the notifier watcher relaunches it`,
+  };
+}
 
 export type CheckStatus = "ok" | "fail" | "skip" | "repaired";
 export type CheckResult = { name: string; status: CheckStatus; detail: string };
@@ -265,15 +330,23 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
     const stat = fs.statSync(paths.heartbeatPath);
     const ageMs = nowMs - stat.mtimeMs;
     if (ageMs > staleMs) {
-      results.push({
-        name: "memoryd-heartbeat",
-        status: "fail",
-        detail:
-          `stale (${Math.round(ageMs / 1000)}s old, threshold ${Math.round(staleMs / 1000)}s)` +
-          (repair
-            ? " — restart is the notifier watcher's job (registration lands in P3); manual: iapeer-memory memoryd"
-            : ""),
-      });
+      if (repair) {
+        // The notifier restarts memoryd only on process EXIT (its watchdog is
+        // deliberately unarmed) — a hung-but-alive daemon is OUR loop to
+        // close: terminate it so exit-detection relaunches with a clean slate.
+        const t = terminateHungMemoryd(egress, paths.pidPath);
+        results.push({
+          name: "memoryd-heartbeat",
+          status: t.done ? "repaired" : "fail",
+          detail: `stale (${Math.round(ageMs / 1000)}s old) — ${t.detail}`,
+        });
+      } else {
+        results.push({
+          name: "memoryd-heartbeat",
+          status: "fail",
+          detail: `stale (${Math.round(ageMs / 1000)}s old, threshold ${Math.round(staleMs / 1000)}s) — repair terminates the hung daemon: iapeer-memory verify --repair`,
+        });
+      }
     } else if (fs.readFileSync(paths.heartbeatPath, "utf-8").includes("watch=off")) {
       results.push({
         name: "memoryd-heartbeat",
@@ -389,11 +462,46 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
           },
         });
       } else {
-        results.push({
-          name: "dream-timer",
-          status: "skip",
-          detail: "not expected (mode: dreamweaver not proactive)",
-        });
+        // Role OFF: a LEFTOVER timer is a problem, not a skip (audit
+        // important, docs-contract): docs/11 promises «verify --repair
+        // re-registers the triggers for the new mode», and the dream gate
+        // checks only note mtimes — a stale timer would keep waking
+        // DreamWeaver against the operator's config. Mirror of update's
+        // reconcile branch.
+        const stale = readWatcherTrigger({ registrantCwd, id: DREAM_TRIGGER_ID, role: "time" });
+        if (!stale) {
+          results.push({
+            name: "dream-timer",
+            status: "skip",
+            detail: "not expected (mode: dreamweaver not proactive)",
+          });
+        } else if (!repair) {
+          results.push({
+            name: "dream-timer",
+            status: "fail",
+            detail:
+              "role is OFF but the weekly timer is still registered — DreamWeaver would keep waking; repair unregisters it",
+          });
+        } else if (!registrationRuntime) {
+          results.push({
+            name: "dream-timer",
+            status: "fail",
+            detail: "stale timer found, but the index peer runtime is unresolved in the registry — cannot unregister",
+          });
+        } else {
+          const un = unregisterTimer(egress, {
+            id: DREAM_TRIGGER_ID,
+            runtime: registrationRuntime,
+            iapeerBin: opts.iapeerBin,
+          });
+          results.push({
+            name: "dream-timer",
+            status: un.ok ? "repaired" : "fail",
+            detail: un.ok
+              ? "stale weekly timer unregistered (role is OFF)"
+              : `stale timer unregister not sent (${un.detail})`,
+          });
+        }
       }
       for (const c of checks) {
         const trigger = readWatcherTrigger({ registrantCwd, id: c.id, role: c.role });

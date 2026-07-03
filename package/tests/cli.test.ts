@@ -315,6 +315,10 @@ describe("migrate command", () => {
       "---\ntype: feedback\ndescription: review feedback\n---\n\nBe precise.\n",
     );
     fs.writeFileSync(path.join(source, "MEMORY.md"), "index file\n");
+    // Non-md payload: apply backs it up and REMOVES it from the source — the
+    // dry-run plan must SHOW that (audit important: confirming a plan that
+    // hides part of the mutation approves more than was shown).
+    fs.writeFileSync(path.join(source, "notes.json"), "{}\n");
     const env = { IAPEER_MEMORY_VAULT_PATH: vault, PEER_PERSONALITY: "tester" };
 
     const dry = runCli(["migrate", "--source", source, "--agent", "tester"], env);
@@ -323,7 +327,9 @@ describe("migrate command", () => {
     expect(dry.stdout).toContain("owner.md: user → person_profile");
     expect(dry.stdout).toContain("lessons.md: feedback → feedback");
     expect(dry.stdout).toContain("system (backup-only): MEMORY.md");
+    expect(dry.stdout).toContain("backup-only, will be REMOVED from source: notes.json");
     expect(fs.existsSync(path.join(source, "owner.md"))).toBe(true);
+    expect(fs.existsSync(path.join(source, "notes.json"))).toBe(true); // dry-run mutates nothing
 
     const apply = runCli(
       ["migrate", "--source", source, "--agent", "tester", "--apply"],

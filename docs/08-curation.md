@@ -20,7 +20,7 @@ On write, the write hook (deterministic fill logic, no model) sets the service f
 
 **A canon note**: on the `CURATOR_TICK` tick, Scriber proofreads it (formatting, style, facts) and renders a verdict; Index enriches it with links, checks for duplicates of existing notes (by search) and merges on a match. A summary goes to the owner; if there's nothing to handle — silence.
 
-**An edit in canon**: it's checked against the template and the zones. If neither the author nor a curator made it, the note is flagged for review and Index looks into it.
+**An edit in canon**: it's checked against the template and the zones. Any non-curator edit — the author's own included — flags the note for review; the flag is the curation queue itself, and Index clears it once the note is actually curated.
 
 **An operative note**: curated more lightly — without Scriber proofreading. Index may set its links; DreamWeaver cleans it.
 

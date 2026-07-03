@@ -194,6 +194,36 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
   const peers = flags.skipEcosystem ? null : listPeers(egress, flags.iapeerBin);
   const humanDefault = flags.human ?? naturalPeerDefault(peers) ?? "";
 
+  // Re-init guard against a vault SPLIT-BRAIN (audit important): the runtime
+  // (memoryd, hooks, MCP) resolves the vault from config.env — writeDefaultConfig
+  // never overwrites an existing file (operator-owned), so an init with a
+  // DIFFERENT --vault would re-point only the doctrines and the host-wide
+  // guide: peers write notes into the new vault, indexing/search keep living
+  // in the old one — silent loss of new team knowledge. Refuse loudly and
+  // name the SOURCE of the effective value (an explicit shell export shadows
+  // config.env — the recipe must point at the right place to edit).
+  const effectiveVault = (process.env.IAPEER_MEMORY_VAULT_PATH ?? "").trim();
+  if (effectiveVault && flags.vault) {
+    const norm = (p: string): string => {
+      try {
+        return fs.realpathSync(p);
+      } catch {
+        return path.resolve(p);
+      }
+    };
+    if (norm(effectiveVault) !== norm(flags.vault)) {
+      const source = fs.existsSync(memoryPaths().configFile)
+        ? `config.env (${memoryPaths().configFile}) or a shell export`
+        : "a shell export of IAPEER_MEMORY_VAULT_PATH";
+      console.error(
+        `iapeer-memory init: the host already runs with vault ${effectiveVault} (from ${source}), ` +
+          `but --vault asks for ${flags.vault}. Refusing a split-brain re-init: ` +
+          "either pass the current path, or update IAPEER_MEMORY_VAULT_PATH first (then memoryd, hooks and doctrines move together).",
+      );
+      return 2;
+    }
+  }
+
   if (!vault) {
     if (!interactive) {
       console.error(
@@ -202,7 +232,12 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
       );
       return 2;
     }
-    vault = ask("Vault (storage) path", path.join(process.env.HOME ?? "~", "iapeer-memory-vault"));
+    // Interactive default: the vault the host ALREADY runs with, when known —
+    // a bare Enter on a re-init must never suggest moving the vault.
+    vault = ask(
+      "Vault (storage) path",
+      effectiveVault || path.join(process.env.HOME ?? "~", "iapeer-memory-vault"),
+    );
   }
   if (!localeRaw) {
     localeRaw = interactive ? ask("Vault locale (en|ru)", "en") : "en";

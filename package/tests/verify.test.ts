@@ -370,3 +370,130 @@ describe("runVerify", () => {
     expect(byName(runVerify(EG, { paths, version: "1.0.0" }), "peer-surfaces").status).toBe("ok");
   });
 });
+
+describe("runVerify — hung-memoryd repair (audit important: the documented no-gap contract)", () => {
+  function staleNow(): number {
+    return Date.now() + DEFAULT_HEARTBEAT_STALE_MS + 60_000;
+  }
+
+  it("stale heartbeat without --repair: fail with the repair hint, nothing signalled", () => {
+    fs.writeFileSync(paths.heartbeatPath, "beat\n");
+    const r = byName(runVerify(EG, { paths, version: "1.0.0", nowMs: staleNow() }), "memoryd-heartbeat");
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain("verify --repair");
+  });
+
+  it("--repair terminates a hung memoryd (verified command line) and removes the pid file", async () => {
+    // A fake daemon whose command line carries "memoryd" (the verified-kill
+    // probe greps for it) and which IGNORES SIGTERM — the deadlocked-event-
+    // loop class: the SIGTERM handler exists but never runs. Only the
+    // SIGKILL escalation can end it.
+    const script = path.join(tmp, "fake-memoryd.sh");
+    fs.writeFileSync(script, "#!/bin/sh\ntrap '' TERM\nwhile true; do sleep 1; done\n");
+    fs.chmodSync(script, 0o755);
+    const daemon = Bun.spawn(["bash", script]);
+    try {
+      fs.writeFileSync(paths.pidPath, `${daemon.pid}\n`);
+      fs.writeFileSync(paths.heartbeatPath, "beat\n");
+
+      const r = byName(
+        runVerify(EG, { paths, version: "1.0.0", repair: true, nowMs: staleNow() }),
+        "memoryd-heartbeat",
+      );
+      expect(r.status).toBe("repaired");
+      expect(r.detail).toContain("SIGKILL"); // escalation actually happened
+      expect(fs.existsSync(paths.pidPath)).toBe(false); // removed AFTER confirmed death
+      const exitCode = await daemon.exited;
+      expect(exitCode).not.toBe(0);
+    } finally {
+      daemon.kill("SIGKILL"); // never leave a smoke process behind
+    }
+  }, 20_000); // the escalation itself holds a 5s SIGTERM grace before SIGKILL
+
+  it("--repair never signals a FOREIGN pid (recycled-pid class) and keeps the pid file", async () => {
+    const stranger = Bun.spawn(["sleep", "60"]);
+    try {
+      fs.writeFileSync(paths.pidPath, `${stranger.pid}\n`);
+      fs.writeFileSync(paths.heartbeatPath, "beat\n");
+      const r = byName(
+        runVerify(EG, { paths, version: "1.0.0", repair: true, nowMs: staleNow() }),
+        "memoryd-heartbeat",
+      );
+      expect(r.status).toBe("fail");
+      expect(r.detail).toContain("does not point at a live memoryd");
+      expect(fs.existsSync(paths.pidPath)).toBe(true);
+      expect(stranger.killed).toBe(false); // untouched
+    } finally {
+      stranger.kill("SIGKILL");
+    }
+  });
+});
+
+describe("runVerify — stale dream timer when the role is OFF (audit important, docs-contract)", () => {
+  const DREAM_KEY = "IAPEER_MEMORY_PROACTIVE_DREAMWEAVER";
+  let savedDream: string | undefined;
+
+  beforeEach(() => {
+    savedDream = process.env[DREAM_KEY];
+    process.env[DREAM_KEY] = "off";
+    const indexCwd = path.join(tmp, "peers", "index");
+    fs.mkdirSync(path.join(indexCwd, ".iapeer"), { recursive: true });
+    fs.writeFileSync(
+      paths.rolesManifestPath,
+      JSON.stringify({ roles: [{ role: "index", peerCwd: indexCwd, template: "/t.md" }] }),
+    );
+    fs.writeFileSync(
+      path.join(indexCwd, ".iapeer", "peer-profile.json"),
+      JSON.stringify({
+        notifier: {
+          triggers: [
+            { role: "event", id: "iapeer-memory-memoryd", owner: "index", target: "scriber", script: paths.launcherPath },
+            { role: "time", id: "iapeer-memory-dream-tick", owner: "index", target: "dreamweaver", check: paths.dreamGateScriptPath },
+          ],
+        },
+      }),
+    );
+  });
+
+  afterEach(() => {
+    if (savedDream === undefined) delete process.env[DREAM_KEY];
+    else process.env[DREAM_KEY] = savedDream;
+  });
+
+  it("role OFF + leftover timer: FAIL (not skip) without repair — the timer would keep waking DreamWeaver", () => {
+    const r = byName(runVerify(EG, { paths, version: "1.0.0" }), "dream-timer");
+    expect(r.status).toBe("fail");
+    expect(r.detail).toContain("role is OFF");
+  });
+
+  it("role OFF + leftover timer + --repair: unregister is sent (fake core bin)", () => {
+    const bin = path.join(tmp, "fake-iapeer");
+    fs.writeFileSync(
+      bin,
+      `#!/usr/bin/env bash\nif [ "$1" = "list" ]; then printf '%s' '[{"personality":"index","default_runtime":"claude"}]'; fi\n`,
+    );
+    fs.chmodSync(bin, 0o755);
+    const r = byName(
+      runVerify(EG, { paths, version: "1.0.0", repair: true, iapeerBin: bin }),
+      "dream-timer",
+    );
+    expect(r.status).toBe("repaired");
+    expect(r.detail).toContain("unregistered");
+  });
+
+  it("role OFF and NO leftover timer: skip stays a skip", () => {
+    const indexCwd = path.join(tmp, "peers", "index");
+    fs.writeFileSync(
+      path.join(indexCwd, ".iapeer", "peer-profile.json"),
+      JSON.stringify({
+        notifier: {
+          triggers: [
+            { role: "event", id: "iapeer-memory-memoryd", owner: "index", target: "scriber", script: paths.launcherPath },
+          ],
+        },
+      }),
+    );
+    const r = byName(runVerify(EG, { paths, version: "1.0.0" }), "dream-timer");
+    expect(r.status).toBe("skip");
+  });
+});

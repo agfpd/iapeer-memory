@@ -535,11 +535,16 @@ export function batchTasks(
 
 // ── CLI ────────────────────────────────────────────────────────────────────
 
-function envNumber(name: string, fallback: number): number {
+export function envNumber(
+  name: string,
+  fallback: number,
+  opts: { allowZero?: boolean } = {},
+): number {
   const v = process.env[name];
   if (typeof v !== "string" || v.length === 0) return fallback;
   const n = Number(v);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
+  const min = opts.allowZero ? 0 : 1;
+  return Number.isFinite(n) && n >= min ? n : fallback;
 }
 
 /**
@@ -617,7 +622,13 @@ export function cmdDreamCollect(argv: string[], egress: Egress): number {
       nowMs: Date.now(),
       windowDays,
       descMaxLen: envNumber("IAPEER_MEMORY_DREAM_DESC_MAXLEN", DEFAULT_DESC_MAXLEN),
-      transcriptCap: envNumber("IAPEER_MEMORY_DREAM_TRANSCRIPT_CAP", DEFAULT_TRANSCRIPT_CAP),
+      // allowZero: «0 = uncapped» is the documented contract (docs/11 + the
+      // generated config.env) and resolveTranscripts honours cap ≤ 0 — the
+      // strict n > 0 parser silently turned the documented OFF switch into
+      // the default cap of 20 (audit important).
+      transcriptCap: envNumber("IAPEER_MEMORY_DREAM_TRANSCRIPT_CAP", DEFAULT_TRANSCRIPT_CAP, {
+        allowZero: true,
+      }),
       existsSync: fs.existsSync,
       env: process.env,
       home: os.homedir(),

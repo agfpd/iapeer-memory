@@ -103,6 +103,11 @@ export type MigrationPlan = {
   files: Array<{ name: string; oldType?: string; subtype?: string; error?: string }>;
   skippedSystem: string[];
   skippedAlreadyInTarget: string[];
+  /** Non-md files in the source: apply backs them up and REMOVES them from
+   *  the source (backup-only). They must appear in the dry-run plan — the
+   *  user confirms the plan, and apply must not mutate the source beyond
+   *  what the plan showed (audit important). */
+  backupOnly: string[];
   subtypeCounts: Record<string, number>;
   totalToMigrate: number;
 };
@@ -120,11 +125,15 @@ export function planMigration(opts: {
   const skippedAlreadyInTarget: string[] = [];
   const subtypeCounts: Record<string, number> = {};
 
-  const entries = fs
+  const allEntries = fs
     .readdirSync(opts.sourceDir, { withFileTypes: true })
-    .filter((e) => e.isFile() && e.name.endsWith(".md"))
+    .filter((e) => e.isFile())
     .map((e) => e.name)
     .sort();
+  // Same universe as applyMigration (ALL files): non-md are backup-only —
+  // shown in the plan, removed from the source on apply.
+  const backupOnly = allEntries.filter((name) => !name.endsWith(".md"));
+  const entries = allEntries.filter((name) => name.endsWith(".md"));
 
   for (const name of entries) {
     if (SKIP_FILES.has(name)) {
@@ -157,6 +166,7 @@ export function planMigration(opts: {
     files,
     skippedSystem,
     skippedAlreadyInTarget,
+    backupOnly,
     subtypeCounts,
     totalToMigrate: files.length,
   };

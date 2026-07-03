@@ -103,7 +103,7 @@ After any of these changes, run `iapeer-memory verify --repair` so the `notifier
 |---|---|---|
 | `IAPEER_MEMORY_CURATOR_SET` | `index,scriber,dreamweaver` | A comma-separated list of personalities whose edits the system treats as sanctioned curation and does **not** flag for review (`needs_review`). |
 
-When a note is edited by neither the author nor a curator, the system sets `needs_review` — the note enters the review queue. Edits by personalities in this list don't set the flag. If you renamed the roles or added a new curator, update the list — otherwise the new curator's edits are taken for hand edits from outside and notes are flagged for review for nothing.
+Every non-curator write — including the author editing their own note — sets `needs_review`: the flag IS the curation queue, and it stays until the Index clears it (automatically, when its edit moves the semantic hash) or a human does. Only edits by personalities in this list don't set the flag. If you renamed the roles or added a new curator, update the list — otherwise the new curator's edits set the flag like any author's and the queue grows for nothing.
 
 ### Tick period
 

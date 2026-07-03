@@ -85,7 +85,18 @@ export function cmdMigrate(argv: string[]): number {
       console.log(`  system (backup-only): ${plan.skippedSystem.join(", ")}`);
     }
     if (plan.skippedAlreadyInTarget.length) {
-      console.log(`  already in target: ${plan.skippedAlreadyInTarget.join(", ")}`);
+      // apply also removes these from the source (the target copy wins).
+      console.log(
+        `  already in target (source copy will be backed up + removed): ${plan.skippedAlreadyInTarget.join(", ")}`,
+      );
+    }
+    if (plan.backupOnly.length) {
+      // The plan must show EVERYTHING apply mutates: non-md files are backed
+      // up and removed from the source — confirming a plan that hides them
+      // would approve an operation wider than shown (audit important).
+      console.log(
+        `  backup-only, will be REMOVED from source: ${plan.backupOnly.join(", ")}`,
+      );
     }
     console.log(
       `  total to migrate: ${plan.totalToMigrate} ` +

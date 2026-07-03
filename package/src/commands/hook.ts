@@ -50,6 +50,7 @@ import {
   type TaxonomyPreset,
 } from "@agfpd/iapeer-memory-core";
 import { memoryPaths, type MemoryPaths } from "../paths.js";
+import { isCompiledRuntime } from "../binary.js";
 import { DEFAULT_HEARTBEAT_STALE_MS } from "./verify.js";
 import { guardedWriteFileSync } from "@agfpd/iapeer-memory-core";
 
@@ -630,8 +631,16 @@ export async function cmdHook(argv: string[], egress: Egress): Promise<number> {
           kick: () => {
             // Self-runtime detached spawn (egress allowance 2): the child
             // re-enters main() with its own egress — sandbox env inherits.
-            const cli = new URL("../cli.ts", import.meta.url).pathname;
-            egress.spawnDetached([process.execPath, cli, "verify", "--repair"]);
+            // COMPILED runtime (the production hook path — the shims exec the
+            // installed binary): the binary always runs its embedded entry
+            // and puts user args at argv[2..], so the cli.ts path must NOT
+            // be passed — pre-fix the child got cmd="/$bunfs/…/cli.ts" →
+            // «unknown command», and self-repair NEVER ran while the hook
+            // printed «Kicked … in the background» (audit important).
+            const args = isCompiledRuntime()
+              ? [process.execPath, "verify", "--repair"]
+              : [process.execPath, new URL("../cli.ts", import.meta.url).pathname, "verify", "--repair"];
+            egress.spawnDetached(args);
           },
         });
         if (result.output) console.log(result.output);
