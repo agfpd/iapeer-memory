@@ -17,6 +17,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   README no longer calls the per-peer session surfaces "plugins", and the
   Russian integration doc gained parity for the pre-v1.2 manual-migration note.
 
+## [0.4.12] - 2026-07-03
+
+Remediation phase 5 (audit 2026-07-02): the embedding layer. (The fourth
+important finding of this section — backfill/flush double-embedding — was
+already fixed in 0.4.9.)
+
+### Fixed
+
+- **Retrying embed backfill**: memoryd racing the embedding endpoint up
+  after a reboot used to die on the first refused batch and leave the vault
+  BM25-only until the next edit, logging «backfill complete» over a 0-of-N
+  failure. The backfill is a retry loop now (backoff 60 s ×5 → 15 min cap,
+  cancellable on shutdown); «complete» is logged only when the queue is
+  actually empty, a stall reports the pending count honestly.
+- **Validated embedder responses**: row count must match the batch, vector
+  dimensions must match the config, OpenAI rows are re-bound by their
+  `index` field, TEI gets the same checks. Short/misshapen/other-dimension
+  responses take the graceful error path instead of a TypeError, a stored
+  0-length vector (NaN in cosine), or an eternally crashing vec insert.
+- **Durable vec invalidation**: a model swap while sqlite-vec is not
+  loadable arms a persistent flag; the first vec-capable start clears the
+  stale mirror (old-model vectors under live rowids that the backfill would
+  never overwrite).
+- `backfillVecChunks` yields between batches — the synchronous loop blocked
+  the event loop (and the MCP port) for the whole mirroring pass.
+
 ## [0.4.11] - 2026-07-03
 
 Remediation phase 4 (audit 2026-07-02): five important + two cosmetic
