@@ -256,7 +256,11 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
     }
   }
 
-  // 2. memoryd heartbeat
+  // 2. memoryd heartbeat. Freshness alone is NOT health: the heartbeat keeps
+  // ticking while fs.watch is dead (audit critical #6) — memoryd now writes
+  // its watch state into the file (`watch=on|off`), and a fresh-but-degraded
+  // daemon must FAIL the check, not hide behind a green mtime. A heartbeat
+  // without the marker (older daemon during a rolling update) counts as ok.
   try {
     const stat = fs.statSync(paths.heartbeatPath);
     const ageMs = nowMs - stat.mtimeMs;
@@ -269,6 +273,14 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
           (repair
             ? " — restart is the notifier watcher's job (registration lands in P3); manual: iapeer-memory memoryd"
             : ""),
+      });
+    } else if (fs.readFileSync(paths.heartbeatPath, "utf-8").includes("watch=off")) {
+      results.push({
+        name: "memoryd-heartbeat",
+        status: "fail",
+        detail:
+          `fresh (${Math.round(ageMs / 1000)}s old) but fs.watch is DOWN — ` +
+          "running degraded on polling; restart memoryd to re-arm watch: iapeer-memory memoryd",
       });
     } else {
       results.push({

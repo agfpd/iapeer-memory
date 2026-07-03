@@ -25,6 +25,8 @@
  * immediately followed by the `|---|` separator.
  */
 
+import { BLOCK_LIST_ITEM_CAPTURE_RE } from "./frontmatter-fill.js";
+
 export const DEFAULT_TAGS_BOUNDARY_MAXLEN = 160;
 
 /** A `|---|`-style table separator cell. */
@@ -97,10 +99,12 @@ export function parseNoteTags(fmBlock: string): string[] {
         .map((s) => s.trim().replace(/^["']|["']$/g, ""))
         .filter(Boolean);
     }
-    // block-list form: following `  - item` lines.
+    // block-list form: following `- item` lines — shared item recogniser,
+    // zero-indent included (audit critical #5: an indent-blind scanner here
+    // made the gate cry «no tags» on valid zero-indent YAML).
     const out: string[] = [];
     for (let j = i + 1; j < lines.length; j++) {
-      const item = /^\s+-\s+(.*)$/.exec(lines[j]);
+      const item = BLOCK_LIST_ITEM_CAPTURE_RE.exec(lines[j]);
       if (!item) break;
       const v = item[1].trim().replace(/^["']|["']$/g, "");
       if (v) out.push(v);

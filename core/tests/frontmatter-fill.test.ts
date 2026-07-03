@@ -376,6 +376,19 @@ for (const T of [TAXONOMY_RU, TAXONOMY_EN]) {
       expect(text).toContain("needs_review: true");
     });
 
+    it("ZERO-indent tags survive processFile as parseable YAML (audit critical #5 worst case)", () => {
+      // Pre-fix: stripEmptyArrays deleted the `tags:` key, orphaning the
+      // zero-indent items → js-yaml threw → the note NEVER reached the index.
+      const p = writeFile(
+        `${F.knowledge}/Z.md`,
+        "---\ntitle: Z\ntags:\n- security\n- ops\n---\nBody\n",
+      );
+      run(p, "permanent", "boris"); // fills the rest of the canon frontmatter
+      const text = fs.readFileSync(p, "utf-8");
+      const parsed = matter(text); // must not throw
+      expect(parsed.data.tags).toEqual(["security", "ops"]);
+    });
+
     it("memory: curator writes foreign subfolder, author parsed from path", () => {
       const p = writeFile(
         `${F.agentMemory}/linus/Грабли.md`,
@@ -530,6 +543,25 @@ describe("stripEmptyArrays", () => {
   it("idempotent", () => {
     const once = stripEmptyArrays("tags:\ncoauthors: []\nstatus: x\n");
     expect(stripEmptyArrays(once)).toBe(once);
+  });
+
+  // ── zero-indent block lists (audit critical #5) ──
+  // `tags:\n- security` is valid YAML (PyYAML's default serialisation).
+  // Deleting the key while its items stay behind orphans the items →
+  // js-yaml throws → the note silently drops out of the index.
+
+  it("keeps a key whose items are at ZERO indent", () => {
+    const fm = "tags:\n- security\n- ops\nstatus: x\n";
+    expect(stripEmptyArrays(fm)).toBe(fm);
+  });
+
+  it("keeps a key whose first item follows a blank line", () => {
+    const fm = "tags:\n\n  - security\nstatus: x\n";
+    expect(stripEmptyArrays(fm)).toBe(fm);
+  });
+
+  it("still strips a genuinely empty key followed by a blank line", () => {
+    expect(stripEmptyArrays("tags:\n\nstatus: x\n")).toBe("\nstatus: x\n");
   });
 
   it("processFile strips empty coauthors (integration)", () => {
@@ -769,6 +801,18 @@ describe("list/coauthor helpers (lean §3a)", () => {
     expect(parseListField("coauthors:\n  - a\n  - b\ntitle: X\n", "coauthors")).toEqual(["a", "b"]);
     expect(parseListField('coauthors: [a, "b"]\n', "coauthors")).toEqual(["a", "b"]);
     expect(parseListField("title: X\n", "coauthors")).toEqual([]);
+  });
+
+  it("parseListField reads ZERO-indent block lists and stops at the next key (audit critical #5)", () => {
+    expect(parseListField("coauthors:\n- a\n- b\ntitle: X\n", "coauthors")).toEqual(["a", "b"]);
+  });
+
+  it("addCoauthor does not orphan ZERO-indent items (removeListField at any indent)", () => {
+    // Pre-fix removeListField skipped only INDENTED items: the key line died,
+    // `- a` stayed behind orphaned → broken frontmatter on the coauthor path.
+    const out = addCoauthor("author: linus\ncoauthors:\n- a\ntitle: X\n", "boris");
+    expect(parseListField(out, "coauthors")).toEqual(["a", "boris"]);
+    expect(out).not.toMatch(/^- a$/m); // no orphaned zero-indent leftover
   });
 
   it("addCoauthor appends, is idempotent, normalises to a block-list", () => {

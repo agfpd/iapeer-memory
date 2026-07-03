@@ -2,10 +2,22 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { CoreConfig } from "./config.js";
 import type { CoreDb } from "./db.js";
-import { deleteMissingDocuments, getStoredHash, getDocumentMeta, documentExists, upsertDocument, getChunksWithoutEmbeddings, storeChunkEmbeddings } from "./db.js";
-import { embedTexts } from "./embedding.js";
+import { deleteMissingDocuments, countMissingDocuments, countDocuments, getStoredHash, getDocumentMeta, documentExists, upsertDocument, getChunksWithoutEmbeddings, storeChunkEmbeddings } from "./db.js";
+import { embedTexts, DEFAULT_INDEX_TIMEOUT_MS } from "./embedding.js";
 import { parseMarkdown, wikilinkBasename } from "./parser.js";
 import { hashContent, normalizeRelativePath, nowIso } from "./utils.js";
+
+/** Mass-delete fuse thresholds (audit critical #2): a legitimate cleanup
+ *  rarely removes >20% of the vault in one pass; an iCloud partial sync
+ *  routinely "removes" much more. Both must trip for the fuse to blow. */
+const MASS_DELETE_MAX_FRACTION = 0.2;
+const MASS_DELETE_MIN_COUNT = 10;
+
+/** Legacy iCloud placeholder (macOS <12.3): an evicted `Note.md` leaves
+ *  `.Note.md.icloud` on disk. Modern macOS evicts in place (UF_DATALESS —
+ *  the file keeps its name and readdir sees it), but old placeholders must
+ *  still count as "the note exists": eviction is not deletion. */
+const ICLOUD_PLACEHOLDER_RE = /^\.(.+\.md)\.icloud$/;
 
 export async function indexAll(params: {
   db: CoreDb;
@@ -29,7 +41,7 @@ export async function indexAll(params: {
   // ambiguous instead of silently picking the last writer.
   const titleToPath = new Map<string, string[]>();
 
-  await scanRoot({
+  const scanOk = await scanRoot({
     db,
     basePath: config.vaultPath,
     excludeFolders: new Set(config.excludeFolders),
@@ -39,9 +51,46 @@ export async function indexAll(params: {
     titleToPath,
   });
 
-  const deleted = deleteMissingDocuments(db, seenPaths);
-  if (deleted > 0) {
-    logger.info(`iapeer-memory: removed ${deleted} stale documents from index`);
+  // «Not seen by the scan» is NOT «deleted» when the scan itself is suspect.
+  // The vault lives in iCloud Drive: partial materialisation, a re-sync
+  // window, or the root vanishing mid-pass (TOCTOU) can legally produce a
+  // near-empty seenPaths while every note is alive and well — deleting on
+  // that evidence silently wipes the team's index, embeddings included
+  // (audit critical #2). Three belts, outermost first:
+  //  1. aborted scan (root missing/not a dir) → no deletion at all;
+  //  2. EMPTY scan over a non-empty corpus → no deletion (any corpus size);
+  //  3. mass-delete fuse — more than MASS_DELETE_MIN_COUNT files AND more
+  //     than MASS_DELETE_MAX_FRACTION of the corpus gone at once → refuse,
+  //     log loudly, require the explicit operator override
+  //     IAPEER_MEMORY_ALLOW_MASS_DELETE=1 (a conscious bulk cleanup is rare
+  //     and can afford one env var; a silent wipe cannot be undone cheaply).
+  if (!scanOk) {
+    logger.warn("iapeer-memory: scan aborted — skipping stale-document deletion");
+  } else {
+    const corpus = countDocuments(db);
+    const staleCount = countMissingDocuments(db, seenPaths);
+    const override = process.env.IAPEER_MEMORY_ALLOW_MASS_DELETE === "1";
+    if (staleCount > 0 && seenPaths.size === 0 && corpus > 0 && !override) {
+      logger.error(
+        `iapeer-memory: scan saw ZERO notes while the index holds ${corpus} — ` +
+          "refusing to delete (iCloud partial sync?). Set IAPEER_MEMORY_ALLOW_MASS_DELETE=1 to force.",
+      );
+    } else if (
+      staleCount > MASS_DELETE_MIN_COUNT &&
+      staleCount > corpus * MASS_DELETE_MAX_FRACTION &&
+      !override
+    ) {
+      logger.error(
+        `iapeer-memory: ${staleCount}/${corpus} indexed notes vanished from the scan — ` +
+          "refusing the mass deletion (iCloud partial sync?). " +
+          "Set IAPEER_MEMORY_ALLOW_MASS_DELETE=1 to force a conscious bulk cleanup.",
+      );
+    } else {
+      const deleted = deleteMissingDocuments(db, seenPaths);
+      if (deleted > 0) {
+        logger.info(`iapeer-memory: removed ${deleted} stale documents from index`);
+      }
+    }
   }
 
   // Resolve wikilinks: map note titles to actual file paths
@@ -215,7 +264,15 @@ export async function embedMissingChunks(params: {
     if (missing.length === 0) break;
 
     const texts = missing.map((c) => c.chunkText);
-    const result = await embedTexts(texts, config.embedding!);
+    // Indexing timeout, NOT the 3s query default: a full batch on a busy
+    // local endpoint takes seconds — at 3s per batch the vault would never
+    // finish embedding, silently (audit critical #3).
+    const result = await embedTexts(
+      texts,
+      config.embedding!,
+      undefined,
+      config.embedding!.indexTimeoutMs ?? DEFAULT_INDEX_TIMEOUT_MS,
+    );
 
     if (!result.vectors) {
       logger.warn(
@@ -249,23 +306,28 @@ type ScanRootParams = {
   titleToPath: Map<string, string[]>;
 };
 
-async function scanRoot(params: ScanRootParams): Promise<void> {
+/** Returns `false` when the scan could not run at all (root missing / not a
+ *  directory) — the caller must then treat seenPaths as NO EVIDENCE and skip
+ *  stale-document deletion entirely. */
+async function scanRoot(params: ScanRootParams): Promise<boolean> {
   const { basePath, logger } = params;
   try {
     const stat = await fs.stat(basePath);
     if (!stat.isDirectory()) {
       logger.warn(`iapeer-memory: skip non-directory path ${basePath}`);
-      return;
+      return false;
     }
   } catch {
     logger.warn(`iapeer-memory: path does not exist, skipping ${basePath}`);
-    return;
+    return false;
   }
 
   await walkDirectory(params, basePath);
+  return true;
 }
 
 async function walkDirectory(params: ScanRootParams, currentPath: string): Promise<void> {
+  const { basePath, seenPaths } = params;
   const entries = await fs.readdir(currentPath, { withFileTypes: true });
   for (const entry of entries) {
     const fullPath = path.join(currentPath, entry.name);
@@ -277,9 +339,29 @@ async function walkDirectory(params: ScanRootParams, currentPath: string): Promi
       continue;
     }
 
-    if (!entry.isFile() || !entry.name.endsWith(".md")) {
+    if (!entry.isFile()) continue;
+
+    // Legacy iCloud placeholder = the note EXISTS, its content is just not
+    // local right now. Count it as seen (eviction ≠ deletion — the index
+    // keeps serving the last-parsed content); never try to read it.
+    const placeholder = ICLOUD_PLACEHOLDER_RE.exec(entry.name);
+    if (placeholder) {
+      seenPaths.add(
+        normalizeRelativePath(path.relative(basePath, path.join(currentPath, placeholder[1]))),
+      );
       continue;
     }
+
+    if (!entry.name.endsWith(".md")) {
+      continue;
+    }
+
+    // The readdir entry itself is the existence evidence — register it BEFORE
+    // any read/parse. A read failure (iCloud dataless file while offline,
+    // permissions, a transient FS error) must degrade to «skip this pass,
+    // keep the indexed copy», NOT to «file deleted»: seenPaths feeds
+    // deleteMissingDocuments (audit critical #2, the read-failure window).
+    seenPaths.add(normalizeRelativePath(path.relative(basePath, fullPath)));
 
     // One malformed frontmatter shouldn't kill the whole scan. Pre-split,
     // server.ts caught at the top of indexAll and the writer continued
@@ -298,10 +380,9 @@ async function walkDirectory(params: ScanRootParams, currentPath: string): Promi
 }
 
 async function indexFile(params: ScanRootParams, fullPath: string): Promise<void> {
-  const { db, basePath, seenPaths, config, logger, titleToPath } = params;
+  const { db, basePath, config, logger, titleToPath } = params;
   const content = await fs.readFile(fullPath, "utf8");
   const docPath = normalizeRelativePath(path.relative(basePath, fullPath));
-  seenPaths.add(docPath);
 
   const contentHash = hashContent(content);
   // NFC-normalize keys: paths from iCloud are NFD, wikilinks in content are NFC

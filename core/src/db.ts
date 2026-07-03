@@ -378,6 +378,22 @@ export function upsertDocument(db: CoreDb, row: IndexedDocumentRow, chunks: { ch
   tx();
 }
 
+/** Total indexed documents — the corpus size the mass-delete fuse (indexer)
+ *  measures would-be deletions against. */
+export function countDocuments(db: CoreDb): number {
+  const row = db.prepare("SELECT COUNT(*) AS n FROM documents").get() as { n: number };
+  return row.n;
+}
+
+/** How many indexed documents are NOT in `existingPaths` — what
+ *  deleteMissingDocuments WOULD remove. Split out so the caller can refuse a
+ *  mass deletion (iCloud partial-sync fuse, audit critical #2) before any
+ *  destructive work. */
+export function countMissingDocuments(db: CoreDb, existingPaths: Set<string>): number {
+  const rows = db.prepare("SELECT path FROM documents").all() as Array<{ path: string }>;
+  return rows.filter((row) => !existingPaths.has(row.path)).length;
+}
+
 export function deleteMissingDocuments(db: CoreDb, existingPaths: Set<string>): number {
   const rows = db.prepare("SELECT path FROM documents").all() as Array<{ path: string }>;
   const stale = rows.map((row) => row.path).filter((docPath) => !existingPaths.has(docPath));
@@ -514,20 +530,43 @@ export function countChunksWithoutEmbeddings(db: CoreDb): number {
 
 export function storeChunkEmbeddings(db: CoreDb, updates: Array<{ id: number; embedding: Buffer }>): void {
   const stmt = db.prepare("UPDATE chunks SET embedding = ? WHERE id = ?");
-  // vec_chunks mirrors the same buffer keyed by rowid == chunks.id. INSERT OR
-  // REPLACE because on re-index the chunks row gets a new id but a deleted
-  // doc may briefly reuse one — REPLACE keeps the vec table consistent
-  // without needing a separate "is this a new id?" check.
+  // vec_chunks mirrors the same buffer keyed by rowid == chunks.id.
+  // chunks.id is AUTOINCREMENT — an id is NEVER reused, so a zero-change
+  // UPDATE means the chunk was deleted by a concurrent reindex (the note was
+  // edited while its batch sat in `await embedTexts` — routine during the
+  // background backfill window). The stale vector MUST be dropped, not
+  // written: vec_chunks rows under dead rowids are invisible to every
+  // cleanup path (they all resolve rowids THROUGH chunks) and permanently
+  // eat KNN top-k slots. The edited note's new chunks re-embed via the
+  // NULL-embedding queue on the next pass.
   const vecStmt = db.vecAvailable
     ? db.prepare("INSERT OR REPLACE INTO vec_chunks(rowid, embedding) VALUES (?, ?)")
     : null;
   const tx = db.transaction(() => {
     for (const u of updates) {
-      stmt.run(u.embedding, u.id);
+      if (stmt.run(u.embedding, u.id).changes === 0) continue;
       if (vecStmt) vecStmt.run(u.id, u.embedding);
     }
   });
   tx();
+}
+
+/**
+ * Drop vec_chunks rows whose owning chunks row no longer exists. One-shot GC
+ * for orphans accumulated before storeChunkEmbeddings learned to check the
+ * UPDATE result (audit 2026-07-02, critical #1) — run once at writer startup;
+ * steady-state it's a cheap no-op. Returns the number of rows removed.
+ */
+export function gcOrphanVecChunks(db: CoreDb): number {
+  if (!db.vecAvailable) return 0;
+  // Count first: `changes` on a vec0 virtual-table DELETE reports shadow-table
+  // row counts, not logical rows (measured: 2 per deleted vector).
+  const { n } = db
+    .prepare("SELECT COUNT(*) AS n FROM vec_chunks WHERE rowid NOT IN (SELECT id FROM chunks)")
+    .get() as { n: number };
+  if (n === 0) return 0;
+  db.prepare("DELETE FROM vec_chunks WHERE rowid NOT IN (SELECT id FROM chunks)").run();
+  return n;
 }
 
 /**

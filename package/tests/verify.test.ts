@@ -103,6 +103,17 @@ describe("runVerify", () => {
     expect(byName(stale, "memoryd-heartbeat").detail).toContain("stale");
   });
 
+  it("heartbeat: fresh but watch=off → FAIL (audit critical #6 — a degraded daemon must not hide behind a green mtime)", () => {
+    fs.writeFileSync(paths.heartbeatPath, "2026-07-03T00:00:00.000Z host watch=off\n");
+    const degraded = byName(runVerify(EG, { paths, version: "1.0.0" }), "memoryd-heartbeat");
+    expect(degraded.status).toBe("fail");
+    expect(degraded.detail).toContain("fs.watch is DOWN");
+
+    // watch=on stays ok — the marker, not mere freshness, decides.
+    fs.writeFileSync(paths.heartbeatPath, "2026-07-03T00:00:00.000Z host watch=on\n");
+    expect(byName(runVerify(EG, { paths, version: "1.0.0" }), "memoryd-heartbeat").status).toBe("ok");
+  });
+
   it("notifier watcher: skip without an index role; ok/fail by the durable trigger in the index profile", () => {
     // no roles manifest → init has not run → skip
     const skip = byName(runVerify(EG, { paths, version: "1.0.0" }), "notifier-watcher");

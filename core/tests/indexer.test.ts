@@ -295,3 +295,90 @@ describe("indexAll — deferred embedding (serve-first background backfill)", ()
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
+
+describe("indexAll — eviction ≠ deletion (audit critical #2)", () => {
+  function docCount(): number {
+    return (db.prepare("SELECT COUNT(*) AS n FROM documents").get() as { n: number }).n;
+  }
+
+  it("a small legitimate deletion still prunes the index", async () => {
+    writeNote("01_Знания/A.md", "---\ntitle: A\n---\nbody a");
+    writeNote("01_Знания/B.md", "---\ntitle: B\n---\nbody b");
+    await indexAll({ db, config, logger: noopLogger });
+    expect(docCount()).toBe(2);
+
+    fs.rmSync(path.join(vault, "01_Знания/B.md"));
+    await indexAll({ db, config, logger: noopLogger });
+    expect(docCount()).toBe(1); // the fuse must not block routine deletions
+  });
+
+  it("an unreadable file (iCloud dataless offline / EACCES) is skipped, NOT deleted", async () => {
+    writeNote("01_Знания/Evicted.md", "---\ntitle: Evicted\n---\nprecious body");
+    await indexAll({ db, config, logger: noopLogger });
+    expect(docCount()).toBe(1);
+
+    // Simulate the read-failure window: readdir sees the entry, read throws.
+    fs.chmodSync(path.join(vault, "01_Знания/Evicted.md"), 0o000);
+    try {
+      await indexAll({ db, config, logger: noopLogger });
+    } finally {
+      fs.chmodSync(path.join(vault, "01_Знания/Evicted.md"), 0o644);
+    }
+    expect(docCount()).toBe(1); // still indexed — the last-parsed copy keeps serving
+  });
+
+  it("a legacy .icloud placeholder counts as the note existing", async () => {
+    writeNote("01_Знания/Cloudy.md", "---\ntitle: Cloudy\n---\ncloud body");
+    await indexAll({ db, config, logger: noopLogger });
+    expect(docCount()).toBe(1);
+
+    // macOS <12.3 eviction: the note is replaced by a hidden placeholder.
+    fs.rmSync(path.join(vault, "01_Знания/Cloudy.md"));
+    writeNote("01_Знания/.Cloudy.md.icloud", "placeholder-blob");
+    await indexAll({ db, config, logger: noopLogger });
+    expect(docCount()).toBe(1); // eviction is not deletion
+  });
+
+  it("a ZERO-file scan over a non-empty corpus never wipes the index", async () => {
+    writeNote("01_Знания/Only.md", "---\ntitle: Only\n---\nbody");
+    await indexAll({ db, config, logger: noopLogger });
+    expect(docCount()).toBe(1);
+
+    // iCloud re-sync window: the root exists but no entries materialised yet.
+    fs.rmSync(path.join(vault, "01_Знания"), { recursive: true });
+    await indexAll({ db, config, logger: noopLogger });
+    expect(docCount()).toBe(1); // refused — corpus intact
+  });
+
+  it("a vanished root (TOCTOU / unmount) skips deletion entirely", async () => {
+    writeNote("01_Знания/Rooted.md", "---\ntitle: Rooted\n---\nbody");
+    await indexAll({ db, config, logger: noopLogger });
+    expect(docCount()).toBe(1);
+
+    fs.rmSync(vault, { recursive: true });
+    await indexAll({ db, config, logger: noopLogger });
+    expect(docCount()).toBe(1);
+    fs.mkdirSync(path.join(vault, "01_Знания"), { recursive: true }); // restore for afterEach
+  });
+
+  it("mass-delete fuse: >min-count AND >20% of the corpus gone at once is refused", async () => {
+    // 12 notes → delete all 12: both thresholds (count>10, fraction>0.2) trip.
+    for (let i = 0; i < 12; i++) writeNote(`01_Знания/N${i}.md`, `---\ntitle: N${i}\n---\nbody ${i}`);
+    writeNote("01_Знания/Keeper.md", "---\ntitle: Keeper\n---\nstays");
+    await indexAll({ db, config, logger: noopLogger });
+    expect(docCount()).toBe(13);
+
+    for (let i = 0; i < 12; i++) fs.rmSync(path.join(vault, `01_Знания/N${i}.md`));
+    await indexAll({ db, config, logger: noopLogger });
+    expect(docCount()).toBe(13); // refused — partial-sync suspicion
+
+    // The conscious operator override lets the bulk cleanup through.
+    process.env.IAPEER_MEMORY_ALLOW_MASS_DELETE = "1";
+    try {
+      await indexAll({ db, config, logger: noopLogger });
+    } finally {
+      delete process.env.IAPEER_MEMORY_ALLOW_MASS_DELETE;
+    }
+    expect(docCount()).toBe(1);
+  });
+});

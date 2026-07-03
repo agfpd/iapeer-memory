@@ -79,11 +79,18 @@ export function stopMemorydByPidFile(egress: Egress, pidPath: string): string {
 
 export function cmdUninstall(argv: string[], egress: Egress): number {
   let keepBinary = false;
-  let iapeerBin = "iapeer";
+  // MUST stay undefined unless --iapeer-bin is explicitly passed: the egress
+  // hub treats a defined iapeerBin as "argv[0] NAMED by the operator/test"
+  // (explicitBin, allowance 1) and lets the spawn through even in refusing
+  // sandbox mode. A `"iapeer"` default here once let `bun test` send LIVE
+  // unregisters to the production notifier (audit 2026-07-02, critical #7).
+  // The PATH-resolve default lives in watcher.ts/fleet.ts (`?? IAPEER_BIN`)
+  // with explicitBin=false — the only place it belongs.
+  let iapeerBin: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--keep-binary") keepBinary = true;
-    else if (a === "--iapeer-bin") iapeerBin = argv[++i] ?? "iapeer";
+    else if (a === "--iapeer-bin") iapeerBin = argv[++i];
     else {
       console.error(`iapeer-memory uninstall: unknown flag: ${a}`);
       return 2;

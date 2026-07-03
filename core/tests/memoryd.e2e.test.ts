@@ -11,6 +11,7 @@ import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Database } from "bun:sqlite";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -623,6 +624,91 @@ describe("memoryd.e2e — fleet fragment rendering", () => {
     } finally {
       await qhandle.close();
       fs.rmSync(qtmp, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── watch-loss degradation contour (audit critical #6) ──────────────────────
+// Pre-fix: a dead fs.watch froze the index and all renders FOREVER while the
+// heartbeat kept ticking green. The contour: polling drives the same pipeline
+// at reduced latency, and the heartbeat file carries `watch=on|off` so
+// verify/status can see the degradation.
+
+describe("memoryd.e2e — watch-loss degradation (audit critical #6)", () => {
+  let wtmp: string;
+  let wvault: string;
+
+  beforeAll(() => {
+    wtmp = fs.mkdtempSync(path.join(os.tmpdir(), "iapeer-memory-watchloss-"));
+    wvault = path.join(wtmp, "vault");
+    fs.mkdirSync(path.join(wvault, T.folders.knowledge), { recursive: true });
+  });
+
+  afterAll(() => {
+    fs.rmSync(wtmp, { recursive: true, force: true });
+  });
+
+  function wconfig(sub: string): CoreConfig {
+    return {
+      ...makeConfig(),
+      vaultPath: wvault,
+      index: { dbPath: path.join(wtmp, `${sub}.db`), fullScanOnStartup: true },
+    };
+  }
+
+  it("a healthy daemon advertises watch=on in the heartbeat", async () => {
+    const hb = path.join(wtmp, "hb-on");
+    const h = await startMemoryd({
+      config: wconfig("on"),
+      emit: () => {},
+      mcpPort: null,
+      heartbeatPath: hb,
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+    });
+    try {
+      expect(fs.readFileSync(hb, "utf-8")).toContain("watch=on");
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("without fs.watch the polling contour still picks up a new note; heartbeat says watch=off", async () => {
+    const hb = path.join(wtmp, "hb-off");
+    const db = path.join(wtmp, "off.db");
+    const h = await startMemoryd({
+      config: wconfig("off"),
+      emit: () => {},
+      mcpPort: null,
+      heartbeatPath: hb,
+      disableWatch: true, // the watch-loss path, from tick one
+      watchFallbackMs: 150,
+      debounceMs: 40,
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+    });
+    try {
+      expect(fs.readFileSync(hb, "utf-8")).toContain("watch=off");
+
+      // A note lands AFTER startup — no fs.watch to see it.
+      fs.writeFileSync(
+        path.join(wvault, T.folders.knowledge, "Слепая заметка.md"),
+        `---\ntitle: Слепая заметка\nauthor: boris\ntype: ${T.types.knowledge}\nstatus: ${T.statusTokens.current}\n---\n\nТело, которое обязан увидеть polling.\n`,
+        "utf-8",
+      );
+
+      // Poll (150ms) + debounce (40ms) + flush — a couple of seconds is ample.
+      const sqlite = new Database(db, { readonly: true });
+      let found = false;
+      for (let i = 0; i < 40 && !found; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        const row = sqlite
+          .prepare("SELECT COUNT(*) AS n FROM documents WHERE title = ?")
+          .get("Слепая заметка") as { n: number };
+        found = row.n === 1;
+      }
+      sqlite.close();
+      expect(found).toBe(true); // index stayed LIVE without fs.watch
+    } finally {
+      await h.close();
     }
   });
 });

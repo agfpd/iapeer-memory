@@ -118,6 +118,44 @@ describe("embedTexts — happy path", () => {
   });
 });
 
+describe("embedTexts — indexing timeout plumbing (audit critical #3)", () => {
+  beforeEach(() => _resetEmbeddingCircuitForTests());
+  afterEach(() => vi.restoreAllMocks());
+
+  // A fetch mock that HONOURS the abort signal: resolves after `delayMs`
+  // unless the signal fires first — the real-fetch timeout semantics the
+  // 3s-default regression hid behind mocks that ignored the signal.
+  function slowEndpointMock(delayMs: number) {
+    return vi
+      .spyOn(globalThis as unknown as { fetch: (url: unknown, init?: RequestInit) => Promise<Response> }, "fetch")
+      .mockImplementation(
+        (_url: unknown, init?: RequestInit) =>
+          new Promise<Response>((resolve, reject) => {
+            const t = setTimeout(() => resolve(mockEmbeddingResponse([[0, 0, 0]])), delayMs);
+            init?.signal?.addEventListener("abort", () => {
+              clearTimeout(t);
+              const err = new Error("aborted");
+              err.name = "AbortError";
+              reject(err);
+            });
+          }),
+      );
+  }
+
+  it("a slow batch that outlives the passed timeout aborts as 'timeout'", async () => {
+    slowEndpointMock(200);
+    const result = await embedTexts(["x"], makeConfig(), undefined, 20);
+    expect(result.status).toBe("timeout");
+  });
+
+  it("the same slow batch SUCCEEDS under the indexing timeout (the regression: 3s default killed every batch)", async () => {
+    slowEndpointMock(50);
+    const result = await embedTexts(["x"], makeConfig(), undefined, 2_000);
+    expect(result.status).toBe("ok");
+    expect(result.vectors).toHaveLength(1);
+  });
+});
+
 describe("embedTexts — error classification", () => {
   beforeEach(() => _resetEmbeddingCircuitForTests());
   afterEach(() => vi.restoreAllMocks());

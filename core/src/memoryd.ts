@@ -41,6 +41,7 @@ import {
   checkParserChanged,
   backfillVecChunks,
   countChunksWithoutEmbeddings,
+  gcOrphanVecChunks,
   type CoreDb,
 } from "./db.js";
 import { indexAll, embedMissingChunks } from "./indexer.js";
@@ -650,6 +651,14 @@ export type MemorydOptions = {
   /** Human owner name; human-edit detection is OFF when absent (⚖7). */
   humanName?: string | null;
   freshEditWindowS?: number;
+  /** Poll period while fs.watch is DOWN (degraded mode), ms. Default 5 min. */
+  watchFallbackMs?: number;
+  /** Belt-pass period while fs.watch is UP (insurance against silently dead
+   *  FSEvents on iCloud vaults), ms. Default 60 min. */
+  watchBeltMs?: number;
+  /** Start WITHOUT fs.watch — the degraded polling contour from tick one.
+   *  Diagnostic/test lever for the watch-loss path; production never sets it. */
+  disableWatch?: boolean;
   /**
    * MCP http port (0 = ephemeral). Pass null to disable the endpoint;
    * omit to use `config.mcp.port` (the configured default, ADR-012).
@@ -746,6 +755,10 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
   const db = openDatabase(config, { migrateVecDimension: true });
   checkEmbeddingModelChanged(db, config.embedding);
   checkParserChanged(db, PARSER_VERSION);
+  // One-shot GC of vec_chunks rows under dead rowids (pre-fix orphans from
+  // the backfill↔reindex race, audit critical #1); steady-state a no-op.
+  const orphans = gcOrphanVecChunks(db);
+  if (orphans > 0) logger.info(`iapeer-memory: GC removed ${orphans} orphan vec_chunks rows`);
   await indexAll({ db, config, logger, embed: false });
 
   // Baseline (каденция): канон + оперативка
@@ -1251,23 +1264,100 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
     }, debounceMs);
   }
 
+  // ── vault watch + degradation contour (audit critical #6) ──
+  // fs.watch is the ONLY event source feeding flush(); pre-fix, a dead
+  // watcher (failed at start, or an async FSWatcher 'error' — which without
+  // a listener CRASHES the process) froze the index and every render forever
+  // while the heartbeat kept ticking green: silent staleness for the whole
+  // team. The contour: a polling timer drives the SAME pipeline — a
+  // snapshotVault diff feeds the detect rules their changed-paths set, then
+  // one full flush (indexAll is content-hash incremental) refreshes
+  // index + renders + deletions. Two cadences, one mechanism:
+  //   - POLL (watchFallbackMs, default 5 min) while the watcher is DOWN —
+  //     the vault stays live at reduced latency instead of freezing;
+  //   - BELT (watchBeltMs, default 60 min) while the watcher is UP — cheap
+  //     insurance against FSEvents dying SILENTLY (iCloud vaults do this;
+  //     it is undetectable from the watcher object).
+  // The watch state is written into the heartbeat file (`watch=on|off`) so
+  // verify/status can surface the degradation instead of reporting green.
+  const watchFallbackMs = opts.watchFallbackMs ?? 5 * 60_000;
+  const watchBeltMs = opts.watchBeltMs ?? 60 * 60_000;
   let watcher: fs.FSWatcher | null = null;
-  try {
-    watcher = fs.watch(config.vaultPath, { recursive: true }, (_event, filename) => {
-      if (!filename || !filename.toString().endsWith(".md")) return;
-      const name = filename.toString();
-      if (name.includes(".memoryd.tmp")) return;
-      schedule(path.join(config.vaultPath, name));
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let pollSnapshot: VaultSnapshot | null = null;
+
+  function pollPass(): void {
+    if (!vaultAvailable()) return;
+    try {
+      const snap = snapshotVault(config.vaultPath, taxonomy);
+      if (pollSnapshot) {
+        const keys = new Set([...pollSnapshot.keys(), ...snap.keys()]);
+        for (const rel of keys) {
+          if (pollSnapshot.get(rel) !== snap.get(rel)) {
+            pending.add(path.join(config.vaultPath, rel));
+          }
+        }
+      }
+      pollSnapshot = snap;
+    } catch (err) {
+      logger.error(`watch-fallback snapshot failed: ${String(err)}`);
+    }
+    // Full pipeline regardless of the diff: indexAll also covers folders
+    // OUTSIDE the monitored set, plus deletions — content-hash skip keeps
+    // the no-change case cheap.
+    flushing = flushing.then(() => flush()).catch((err) => {
+      logger.error(`watch-fallback pass failed: ${String(err)}`);
     });
-  } catch (err) {
-    logger.error(`fs.watch failed (events degraded to manual passes): ${String(err)}`);
+  }
+
+  function armPollTimer(periodMs: number): void {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(pollPass, periodMs);
+    pollTimer.unref?.();
+  }
+
+  function degradeWatch(reason: string): void {
+    try {
+      watcher?.close();
+    } catch {
+      // already dead — that's why we're here
+    }
+    watcher = null;
+    logger.error(
+      `fs.watch DOWN (${reason}) — degraded to polling every ${Math.round(watchFallbackMs / 1000)}s; ` +
+        "index/renders stay live at reduced latency; restart memoryd to re-arm watch",
+    );
+    armPollTimer(watchFallbackMs);
+    touchHeartbeat(); // reflect watch=off immediately, not on the next tick
+  }
+
+  if (opts.disableWatch) {
+    degradeWatch("disabled by options");
+  } else {
+    try {
+      watcher = fs.watch(config.vaultPath, { recursive: true }, (_event, filename) => {
+        if (!filename || !filename.toString().endsWith(".md")) return;
+        const name = filename.toString();
+        if (name.includes(".memoryd.tmp")) return;
+        schedule(path.join(config.vaultPath, name));
+      });
+      // An async watcher error without a listener is an unhandled 'error'
+      // event — it would crash the daemon. Degrade to polling instead.
+      watcher.on("error", (err) => degradeWatch(String(err)));
+      armPollTimer(watchBeltMs);
+    } catch (err) {
+      degradeWatch(String(err));
+    }
   }
 
   // ── heartbeat ──
   function touchHeartbeat(): void {
     try {
       fs.mkdirSync(path.dirname(heartbeatPath), { recursive: true });
-      guardedWriteFileSync(heartbeatPath, `${new Date().toISOString()} ${os.hostname()}\n`);
+      guardedWriteFileSync(
+        heartbeatPath,
+        `${new Date().toISOString()} ${os.hostname()} watch=${watcher ? "on" : "off"}\n`,
+      );
     } catch (err) {
       logger.error(`heartbeat write failed: ${String(err)}`);
     }
@@ -1373,6 +1463,7 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
     },
     close: async () => {
       watcher?.close();
+      if (pollTimer) clearInterval(pollTimer);
       backfillStopping = true; // bail the background embed loop at its next batch
       await backfillTask; // batches are atomic — await ensures no torn write
       if (flushTimer) clearTimeout(flushTimer);

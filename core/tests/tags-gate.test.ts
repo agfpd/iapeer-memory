@@ -90,6 +90,12 @@ describe("parseNoteTags", () => {
   it("empty block-list → empty", () => {
     expect(parseNoteTags("tags:\nauthor: a\n")).toEqual([]);
   });
+  it("ZERO-indent block-list — valid YAML, the gate must not cry «no tags» (audit critical #5)", () => {
+    expect(parseNoteTags("title: X\ntags:\n- Память\n- codex\nauthor: a\n")).toEqual([
+      "Память",
+      "codex",
+    ]);
+  });
 });
 
 describe("tagGateProblems", () => {

@@ -42,7 +42,21 @@ export type EmbeddingConfig = {
   apiKey: string | null;
   /** Wire format (ADR-013). Default "openai" — the inherited behaviour. */
   provider?: EmbeddingProvider;
+  /**
+   * Per-batch timeout for the INDEXING path (embedMissingChunks), ms.
+   * The shared http-client default (3s) is calibrated for ONE short query
+   * text; a full batch (batchSize × chunkSize chars) on a busy local
+   * endpoint legitimately takes 4–10s+. Left at 3s, every batch aborts,
+   * the vault never embeds, and nothing reports it (audit critical #3).
+   * The QUERY path deliberately stays on the 3s default — an interactive
+   * search must not hang a minute on a dead endpoint.
+   */
+  indexTimeoutMs?: number;
 };
+
+/** Default for {@link EmbeddingConfig.indexTimeoutMs} — generous enough for a
+ *  CPU-bound local endpoint chewing a full batch, still finite. */
+export const DEFAULT_INDEX_TIMEOUT_MS = 60_000;
 
 /**
  * Status of a single embedding call, surfaced up to the memory_search
@@ -107,11 +121,18 @@ function parseResponse(json: unknown, config: EmbeddingConfig): Float32Array[] |
  * Embed a batch of texts. Returns `{vectors, status}` where `vectors === null`
  * on any non-ok status. Callers check `status` when they need to tell a
  * timeout from an error.
+ *
+ * `timeoutMs` applies PER BATCH (each inner postJson call) and only when no
+ * caller `signal` is given — a caller-supplied signal replaces the timeout
+ * entirely (postJson contract). The indexing path passes its long
+ * `indexTimeoutMs` here; the query path omits it and keeps the strict 3s
+ * default.
  */
 export async function embedTexts(
   texts: string[],
   config: EmbeddingConfig,
   signal?: AbortSignal,
+  timeoutMs?: number,
 ): Promise<EmbedBatchResult> {
   if (!texts.length) return { vectors: [], status: "ok" };
 
@@ -125,6 +146,7 @@ export async function embedTexts(
       body: buildRequestBody(batch, config),
       apiKey: config.apiKey,
       signal,
+      timeoutMs,
       breaker,
     });
     if (result.status !== "ok") {

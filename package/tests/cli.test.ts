@@ -410,6 +410,30 @@ describe("uninstall and status commands", () => {
     expect(fs.existsSync(slotPath)).toBe(false);
   });
 
+  it("bare uninstall (no --iapeer-bin) NEVER spawns a PATH-resolved iapeer under the sandbox", () => {
+    // Regression contract (audit 2026-07-02, critical #7): uninstall used to
+    // default iapeerBin to "iapeer", which the egress hub took for an
+    // operator-NAMED binary (explicitBin, allowance 1) — `bun test` sent LIVE
+    // unregisters of the production memoryd watcher + dream timer. Plant a
+    // marker-writing `iapeer` at the front of PATH: if the refusing egress is
+    // ever bypassed again, the marker appears and this test fails.
+    const fakeBinDir = path.join(tmp, "fake-path-bin");
+    const marker = path.join(tmp, "iapeer-was-spawned.marker");
+    fs.mkdirSync(fakeBinDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBinDir, "iapeer"),
+      `#!/bin/sh\necho leaked > "${marker}"\necho '[]'\n`,
+    );
+    fs.chmodSync(path.join(fakeBinDir, "iapeer"), 0o755);
+
+    const r = runCli(["uninstall"], {
+      PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+    });
+    expect(r.exitCode).toBe(0);
+    expect(fs.existsSync(marker)).toBe(false); // the doorway stayed shut
+    expect(r.stdout).toContain("unregister not sent"); // honest refusal, not silence
+  });
+
   it("uninstall refuses a foreign slot (exit 1, slot intact)", () => {
     const slotPath = path.join(tmp, "iapeer-root", "memory-provider.json");
     fs.mkdirSync(path.dirname(slotPath), { recursive: true });

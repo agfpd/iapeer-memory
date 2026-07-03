@@ -52,6 +52,14 @@ export function fromJson<T>(value: string | null, fallback: T): T {
  * whitespace), minus the `"tok"*` wrapping. Shared so the FTS query and the
  * query-aware snippet builder tokenise identically: the snippet highlights
  * exactly the words FTS treated as terms, без расхождений.
+ *
+ * Tokens with NO letter/number at all («—», «→», «…», lone emoji) are dropped:
+ * unicode61 tokenises such a quoted phrase into ZERO terms, and in FTS5 a
+ * zero-term phrase matches zero rows — one stray «—» (routine in Russian
+ * queries and in this vault's own «Фаза — X» naming) would AND the whole
+ * MATCH query down to empty. A token that merely CONTAINS a separator
+ * («Фаза—MVP») is kept: FTS treats it as an adjacent-tokens phrase, which
+ * still matches.
  */
 export function queryTokens(query: string): string[] {
   return query
@@ -59,7 +67,7 @@ export function queryTokens(query: string): string[] {
     .replace(/["(){}[\]:!^~@#$%&|\\<>=+;,./\-]/g, " ")
     .trim()
     .split(/\s+/)
-    .filter(Boolean);
+    .filter((token) => /[\p{L}\p{N}]/u.test(token));
 }
 
 export function escapeFtsQuery(query: string): string {

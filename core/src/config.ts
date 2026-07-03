@@ -19,7 +19,7 @@
 
 import { statSync } from "node:fs";
 import os from "node:os";
-import { isEmbeddingProvider, type EmbeddingProvider } from "./embedding.js";
+import { isEmbeddingProvider, DEFAULT_INDEX_TIMEOUT_MS, type EmbeddingProvider } from "./embedding.js";
 import { isRerankerProvider, type RerankerProvider } from "./reranker.js";
 import {
   defaultExcludeFolders,
@@ -76,6 +76,9 @@ export type CoreConfig = {
     apiKey: string | null;
     /** Wire format (ADR-013); configFromEnv always sets it. */
     provider?: EmbeddingProvider;
+    /** Per-batch INDEXING timeout, ms (query path keeps the 3s default);
+     *  configFromEnv always sets it. */
+    indexTimeoutMs?: number;
   } | null;
   reranker: {
     endpoint: string;
@@ -273,6 +276,10 @@ export function configFromEnv(): CoreConfig {
           dimensions: envNumber("IAPEER_MEMORY_EMBEDDING_DIMENSIONS", 4096),
           batchSize: envNumber("IAPEER_MEMORY_EMBEDDING_BATCH_SIZE", 32),
           apiKey: envString("IAPEER_MEMORY_EMBEDDING_API_KEY") || null,
+          indexTimeoutMs: envNumber(
+            "IAPEER_MEMORY_EMBEDDING_TIMEOUT_MS",
+            DEFAULT_INDEX_TIMEOUT_MS,
+          ),
         }
       : null,
     reranker: rerankerEndpoint && rerankerProviderRaw !== "none"

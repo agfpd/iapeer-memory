@@ -140,6 +140,7 @@ Enabled by setting an endpoint. Any service speaking the OpenAI `/v1/embeddings`
 | `IAPEER_MEMORY_EMBEDDING_DIMENSIONS` | `4096` | Vector dimensions (model-dependent). |
 | `IAPEER_MEMORY_EMBEDDING_BATCH_SIZE` | `32` | Request batch size to the service. |
 | `IAPEER_MEMORY_EMBEDDING_API_KEY` | empty | API key, if the service requires one. |
+| `IAPEER_MEMORY_EMBEDDING_TIMEOUT_MS` | `60000` | Per-batch timeout of the INDEXING path (a slow local endpoint chews a full batch in seconds). Interactive queries keep the strict 3s default. |
 
 ### Reranking
 
@@ -167,6 +168,7 @@ You rarely need to change these.
 | `IAPEER_MEMORY_CHUNK_OVERLAP` | `80` | Overlap between adjacent chunks (characters). |
 | `IAPEER_MEMORY_RRF_K` | `60` | The constant that fuses the two search layers (Reciprocal Rank Fusion). |
 | `IAPEER_MEMORY_FULL_SCAN_ON_STARTUP` | `true` | A full re-index of the vault at daemon start (a consistency guarantee). `false` — a faster start, trusting the incremental index. |
+| `IAPEER_MEMORY_ALLOW_MASS_DELETE` | unset | Emergency override of the mass-delete fuse. A scan that would drop >10 notes AND >20% of the corpus at once is refused (an iCloud partial sync looks exactly like that); set `1` for one conscious bulk cleanup. |
 | `IAPEER_MEMORY_EXCLUDE_FOLDERS` | the `99_System` / `99_Система` folder | Folders (comma-separated) skipped during indexing. |
 
 The status weights in results (active above, stale below), the penalty for another agent's operative memory, and the boost for hub notes are fixed in code and not tunable by variables; they're covered in [06 — Search and write](06-search-and-write.md).
@@ -225,7 +227,7 @@ A roundup of everything above — for quick lookup.
 
 **Consolidation:** `IAPEER_MEMORY_DREAM_CRON`, `IAPEER_MEMORY_DREAM_WINDOW_DAYS`, `IAPEER_MEMORY_DREAM_DESC_MAXLEN`, `IAPEER_MEMORY_DREAM_BATCH_THRESHOLD`, `IAPEER_MEMORY_DREAM_GROUP_CAP`, `IAPEER_MEMORY_DREAM_TRANSCRIPT_CAP`.
 
-**Search:** `IAPEER_MEMORY_EMBEDDING_ENDPOINT`, `IAPEER_MEMORY_EMBEDDING_PROVIDER`, `IAPEER_MEMORY_EMBEDDING_MODEL`, `IAPEER_MEMORY_EMBEDDING_DIMENSIONS`, `IAPEER_MEMORY_EMBEDDING_BATCH_SIZE`, `IAPEER_MEMORY_EMBEDDING_API_KEY`, `IAPEER_MEMORY_RERANKER_ENDPOINT`, `IAPEER_MEMORY_RERANKER_PROVIDER`, `IAPEER_MEMORY_RERANKER_MODEL`, `IAPEER_MEMORY_RERANKER_TOP_K`, `IAPEER_MEMORY_RERANKER_WEIGHT`, `IAPEER_MEMORY_RERANKER_API_KEY`, `IAPEER_MEMORY_MAX_RESULTS`, `IAPEER_MEMORY_CHUNK_SIZE`, `IAPEER_MEMORY_CHUNK_OVERLAP`, `IAPEER_MEMORY_RRF_K`, `IAPEER_MEMORY_FULL_SCAN_ON_STARTUP`, `IAPEER_MEMORY_EXCLUDE_FOLDERS`, `IAPEER_MEMORY_DEDUP_THRESHOLD`, `IAPEER_MEMORY_LINK_HINT_THRESHOLD`.
+**Search:** `IAPEER_MEMORY_EMBEDDING_ENDPOINT`, `IAPEER_MEMORY_EMBEDDING_PROVIDER`, `IAPEER_MEMORY_EMBEDDING_MODEL`, `IAPEER_MEMORY_EMBEDDING_DIMENSIONS`, `IAPEER_MEMORY_EMBEDDING_BATCH_SIZE`, `IAPEER_MEMORY_EMBEDDING_API_KEY`, `IAPEER_MEMORY_EMBEDDING_TIMEOUT_MS`, `IAPEER_MEMORY_RERANKER_ENDPOINT`, `IAPEER_MEMORY_RERANKER_PROVIDER`, `IAPEER_MEMORY_RERANKER_MODEL`, `IAPEER_MEMORY_RERANKER_TOP_K`, `IAPEER_MEMORY_RERANKER_WEIGHT`, `IAPEER_MEMORY_RERANKER_API_KEY`, `IAPEER_MEMORY_MAX_RESULTS`, `IAPEER_MEMORY_CHUNK_SIZE`, `IAPEER_MEMORY_CHUNK_OVERLAP`, `IAPEER_MEMORY_RRF_K`, `IAPEER_MEMORY_FULL_SCAN_ON_STARTUP`, `IAPEER_MEMORY_EXCLUDE_FOLDERS`, `IAPEER_MEMORY_DEDUP_THRESHOLD`, `IAPEER_MEMORY_LINK_HINT_THRESHOLD`.
 
 **MCP and the owner:** `IAPEER_MEMORY_MCP_PORT`, `IAPEER_MEMORY_HUMAN_NAME`, `IAPEER_MEMORY_AGENT_NAME`.
 

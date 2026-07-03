@@ -21,6 +21,7 @@ import {
   getActiveToArchiveLinks,
   getStoredHash,
   vecChunksDimension,
+  gcOrphanVecChunks,
 } from "../src/db.js";
 import type { CoreDb } from "../src/db.js";
 import type { CoreConfig } from "../src/config.js";
@@ -753,4 +754,91 @@ describe("vec_chunks dimension migration", () => {
       h.close();
     },
   );
+});
+
+describe("vec_chunks orphan protection (backfill ↔ reindex race, audit critical #1)", () => {
+  it("storeChunkEmbeddings for a DEAD chunk id writes nothing (no orphan vec row)", () => {
+    // The race: an embed batch holds chunk ids; while it awaits the endpoint,
+    // the note is re-indexed (upsertDocument deletes + reinserts chunks under
+    // NEW autoincrement ids). The returning batch must drop its vectors, not
+    // resurrect the dead rowids in vec_chunks.
+    upsertDocument(
+      db,
+      {
+        path: "raced.md", title: "R", type: null, status: null, tags: [],
+        contentHash: "h1", frontmatter: {}, created: null, updated: null, indexedAt: "x",
+      },
+      [{ chunkIndex: 0, text: "old content" }],
+      [],
+    );
+    const staleId = getChunksWithoutEmbeddings(db, 1)[0]!.id;
+
+    // Concurrent reindex of the same note → old chunks row is gone.
+    upsertDocument(
+      db,
+      {
+        path: "raced.md", title: "R", type: null, status: null, tags: [],
+        contentHash: "h2", frontmatter: {}, created: null, updated: null, indexedAt: "x",
+      },
+      [{ chunkIndex: 0, text: "new content" }],
+      [],
+    );
+
+    const buf = Buffer.from(new Float32Array([1, 2, 3]).buffer);
+    storeChunkEmbeddings(db, [{ id: staleId, embedding: buf }]); // must not throw
+    // The dead id got neither resurrected nor embedded; the NEW chunk still
+    // waits in the NULL queue (it will re-embed on the next pass).
+    const missing = getChunksWithoutEmbeddings(db, 10);
+    expect(missing).toHaveLength(1);
+    expect(missing[0]!.chunkText).toBe("new content");
+  });
+
+  it.skipIf(!VEC_AVAILABLE)(
+    "the race leaves no vec_chunks row; gcOrphanVecChunks sweeps pre-fix leftovers",
+    () => {
+      const p = path.join(tmpDir, "vec-orphan.db");
+      const h = openDatabase(makeConfigWithEmbedding(p, 4), { migrateVecDimension: true });
+      insertOneEmbedding(h, "live.md", "h1", [1, 2, 3, 4]); // a legitimate row
+
+      // Replay the race against a second note.
+      upsertDocument(
+        h,
+        {
+          path: "raced.md", title: "R", type: null, status: null, tags: [],
+          contentHash: "h1", frontmatter: {}, created: null, updated: null, indexedAt: "x",
+        },
+        [{ chunkIndex: 0, text: "old content" }],
+        [],
+      );
+      const staleId = getChunksWithoutEmbeddings(h, 1)[0]!.id;
+      upsertDocument(
+        h,
+        {
+          path: "raced.md", title: "R", type: null, status: null, tags: [],
+          contentHash: "h2", frontmatter: {}, created: null, updated: null, indexedAt: "x",
+        },
+        [{ chunkIndex: 0, text: "new content" }],
+        [],
+      );
+      storeChunkEmbeddings(h, [
+        { id: staleId, embedding: Buffer.from(new Float32Array([9, 9, 9, 9]).buffer) },
+      ]);
+      expect(vecRowCount(h)).toBe(1); // only live.md's vector — no orphan
+
+      // Pre-fix DBs may already carry orphans: plant one directly and GC it.
+      h.prepare("INSERT INTO vec_chunks(rowid, embedding) VALUES (?, ?)").run(
+        999_999,
+        Buffer.from(new Float32Array([7, 7, 7, 7]).buffer),
+      );
+      expect(vecRowCount(h)).toBe(2);
+      expect(gcOrphanVecChunks(h)).toBe(1);
+      expect(vecRowCount(h)).toBe(1); // live row untouched
+      expect(gcOrphanVecChunks(h)).toBe(0); // steady-state no-op
+      h.close();
+    },
+  );
+
+  it("gcOrphanVecChunks is a no-op without vec support", () => {
+    expect(gcOrphanVecChunks(db)).toBe(0);
+  });
 });

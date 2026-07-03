@@ -132,4 +132,27 @@ describe("escapeFtsQuery", () => {
   it("strips control characters", () => {
     expect(escapeFtsQuery("a\x00b\x1fc")).toBe('"a"* "b"* "c"*');
   });
+
+  // Unicode separator tokens: a standalone «—»/«→»/«…»/emoji token tokenises
+  // to a ZERO-term FTS5 phrase, which matches zero rows and (via implicit AND)
+  // zeroes the WHOLE query. Routine in Russian queries and in the vault's own
+  // canonical «Фаза — X» note names.
+  it("drops a standalone em-dash token (canonical «Фаза — X» names must match)", () => {
+    expect(escapeFtsQuery("Фаза — MVP")).toBe('"Фаза"* "MVP"*');
+  });
+
+  it("drops arrow / ellipsis / emoji-only tokens", () => {
+    expect(escapeFtsQuery("flush → render")).toBe('"flush"* "render"*');
+    expect(escapeFtsQuery("итог …")).toBe('"итог"*');
+    expect(escapeFtsQuery("🔥")).toBe("");
+  });
+
+  it("returns empty string when ALL tokens are separators", () => {
+    expect(escapeFtsQuery("— → …")).toBe("");
+  });
+
+  it("keeps tokens that merely CONTAIN a separator", () => {
+    // Adjacent-tokens phrase match still works for these in FTS5.
+    expect(escapeFtsQuery("Фаза—MVP")).toBe('"Фаза—MVP"*');
+  });
 });

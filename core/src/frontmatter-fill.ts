@@ -74,6 +74,25 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * One YAML block-list ITEM line, at ANY valid indent — INCLUDING zero
+ * (`tags:\n- security` is valid YAML; PyYAML serialises it that way by
+ * default, humans write it too). The single definition shared by every
+ * list-aware scanner here and in tags-gate: recognising item lines
+ * inconsistently is how stripEmptyArrays once deleted a `tags:` key while
+ * its zero-indent items stayed behind — orphaned items = broken frontmatter
+ * = the note silently drops out of the index (audit critical #5).
+ * A new-key line (`^[A-Za-z_]…: …`) can never match: it doesn't start
+ * with `-`.
+ * INVARIANT: a key followed by item lines in ANY valid indent form must
+ * never be treated as empty / skipped / partially consumed.
+ */
+export const BLOCK_LIST_ITEM_RE = /^\s*-\s/;
+
+/** The capturing variant of {@link BLOCK_LIST_ITEM_RE} for parsers that
+ *  extract the item value. Kept side by side so they cannot drift. */
+export const BLOCK_LIST_ITEM_CAPTURE_RE = /^\s*-\s+(.*)$/;
+
 export function hasField(block: string, key: string): boolean {
   return new RegExp(`^${escapeRe(key)}\\s*:`, "m").test(block);
 }
@@ -118,7 +137,7 @@ export function parseListField(block: string, key: string): string[] {
     }
     const out: string[] = [];
     for (let j = i + 1; j < lines.length; j++) {
-      const item = /^\s+-\s+(.*)$/.exec(lines[j]);
+      const item = BLOCK_LIST_ITEM_CAPTURE_RE.exec(lines[j]);
       if (!item) break;
       const v = item[1].trim().replace(/^["']|["']$/g, "");
       if (v) out.push(v);
@@ -128,7 +147,8 @@ export function parseListField(block: string, key: string): string[] {
   return [];
 }
 
-/** Remove a list field entirely (its `key:` line + any `  - item` lines). */
+/** Remove a list field entirely (its `key:` line + any `- item` lines,
+ *  zero-indent included). */
 function removeListField(block: string, key: string): string {
   const lines = block.split("\n");
   const out: string[] = [];
@@ -136,7 +156,7 @@ function removeListField(block: string, key: string): string {
   for (let i = 0; i < lines.length; i++) {
     if (head.test(lines[i])) {
       // skip the key line and the following block-list items
-      while (i + 1 < lines.length && /^\s+-\s/.test(lines[i + 1])) i++;
+      while (i + 1 < lines.length && BLOCK_LIST_ITEM_RE.test(lines[i + 1])) i++;
       continue;
     }
     out.push(lines[i]);
@@ -367,8 +387,14 @@ export function stripEmptyArrays(
         continue;
       }
       if (value === "") {
-        const nxt = i + 1 < lines.length ? lines[i + 1] : "";
-        if (!/^\s+-\s/.test(nxt)) {
+        // The first NON-EMPTY following line decides (YAML allows blank
+        // lines between the key and its first item); items at ANY indent
+        // count — deleting `tags:` above zero-indent items orphans them
+        // and breaks the whole frontmatter (audit critical #5).
+        let j = i + 1;
+        while (j < lines.length && lines[j].trim() === "") j += 1;
+        const nxt = j < lines.length ? lines[j] : "";
+        if (!BLOCK_LIST_ITEM_RE.test(nxt)) {
           i += 1;
           continue;
         }
