@@ -81,6 +81,23 @@ for (const T of [TAXONOMY_RU, TAXONOMY_EN]) {
       expect(stripLinksSection(body, T)).toBe(body);
     });
 
+    it("leading block: real content before a LATER --- is NOT dropped (no-op on non-conforming structure)", () => {
+      // Audit important: the old code cut at the FIRST \n---\n anywhere —
+      // «Абзац 1» silently vanished from chunks/FTS/embeddings.
+      const body = `${T.linksSection}\n- [[A]]\n\nReal paragraph one.\n\n---\n\nParagraph two.`;
+      expect(stripLinksSection(body, T)).toBe(body);
+    });
+
+    it("leading block: a setext h2 underline is not taken for the divider", () => {
+      const body = `${T.linksSection}\n- [[A]]\n\nHeading text\n---\nBody under setext.`;
+      expect(stripLinksSection(body, T)).toBe(body);
+    });
+
+    it("strips a trailing links block whose divider carries CRLF", () => {
+      const body = `Actual content.\r\n\r\n---\r\n\r\n${T.linksSection}\r\n- [[Foo]] — why`;
+      expect(stripLinksSection(body, T)).toBe("Actual content.");
+    });
+
     it("strips a trailing links block (canonical bottom)", () => {
       const body = `Actual content.\n\n${T.linksSection}\n- [[Foo]] — why\n- [[Bar]] — how`;
       expect(stripLinksSection(body, T)).toBe("Actual content.");
@@ -213,6 +230,29 @@ describe("chunkText", () => {
       // produced chunk should be near or under chunkSize.
       expect(c.text.length).toBeLessThanOrEqual(50);
     }
+  });
+
+  it("splits an oversized paragraph at WHITESPACE, never mid-word (audit important: findSplitIndex was dead)", () => {
+    // A long bullet list is ONE «paragraph» after the \n{2,} split — the
+    // old code hard-cut every boundary at exactly chunkSize, tearing words
+    // (and potentially surrogate pairs) in half.
+    const bullet = Array.from({ length: 40 }, (_, i) => `- пункт номер ${i} со словами`).join("\n");
+    // The split loop is reachable only for a big paragraph that FOLLOWS one
+    // (a single-paragraph oversized doc is pushed whole — an adjacent defect
+    // the audit noted separately, out of this fix's scope).
+    const chunks = chunkText(`Первый абзац.\n\n${bullet}`, 200, 40);
+    expect(chunks.length).toBeGreaterThan(2);
+    // A whitespace-aligned cut can only produce COMPLETE source tokens —
+    // the old hard cut at chunkSize produced torn halves («сло»/«вами»).
+    const vocabulary = new Set(["-", "пункт", "номер", "со", "словами", "Первый", "абзац."]);
+    for (const c of chunks) {
+      expect(c.text.includes("\uFFFD")).toBe(false); // no lone surrogate halves
+      for (const part of c.text.split(/\s+/)) {
+        expect(vocabulary.has(part) || /^\d+$/.test(part)).toBe(true);
+      }
+    }
+    // No content lost across the chunking (overlap duplicates allowed).
+    expect(chunks.map((c) => c.text).join(" ")).toContain("пункт номер 39");
   });
 
   it("emits sequential chunkIndex", () => {

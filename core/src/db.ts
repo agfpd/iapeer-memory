@@ -103,6 +103,17 @@ export function openDatabase(config: CoreConfig, options: OpenDatabaseOptions = 
       DROP TABLE IF EXISTS chunks;
       DROP TABLE IF EXISTS edges;
     `);
+    // DROP TABLE chunks resets AUTOINCREMENT — rebuilt chunks reuse ids
+    // 1..N, and a legacy vec_chunks would silently attribute OLD vectors to
+    // NEW chunks through the rowid join. Deleting the embedding fingerprint
+    // makes checkEmbeddingModelChanged treat the next start as a model
+    // change and clear the vec mirror + embeddings — the full re-embed is
+    // unavoidable on a legacy rebuild anyway.
+    try {
+      db.prepare("DELETE FROM meta WHERE key = 'embedding_fingerprint'").run();
+    } catch {
+      // meta may not exist yet on a truly ancient DB — created below
+    }
   }
 
   db.exec(`
@@ -394,25 +405,60 @@ export function countMissingDocuments(db: CoreDb, existingPaths: Set<string>): n
   return rows.filter((row) => !existingPaths.has(row.path)).length;
 }
 
-export function deleteMissingDocuments(db: CoreDb, existingPaths: Set<string>): number {
-  const rows = db.prepare("SELECT path FROM documents").all() as Array<{ path: string }>;
-  const stale = rows.map((row) => row.path).filter((docPath) => !existingPaths.has(docPath));
-  if (stale.length === 0) return 0;
+/** Paths + stored titles of every indexed document — the incremental
+ *  indexAll path rebuilds titleToPath from here instead of re-reading the
+ *  whole vault (audit important: O(vault) rescans on the hot path). */
+export function listDocumentTitles(db: CoreDb): Array<{ path: string; title: string | null }> {
+  return db.prepare("SELECT path, title FROM documents").all() as Array<{
+    path: string;
+    title: string | null;
+  }>;
+}
 
-  // basename → current path(s), for MOVE detection. Archiving a note is a move
-  // (`07_Архив/<base>`); its incoming edges (the note's backlinks) must follow,
-  // not be dropped — otherwise an archived note loses its backlinks AND the
-  // active→archive link rule never sees the edge until the source is re-parsed
-  // (the archival-moment gap). resolveWikilinks skips already-resolved `.md`
-  // edges, so a dropped incoming edge is NOT self-healed.
+/** basename → current path(s), for MOVE detection. Archiving a note is a move
+ *  (`07_Архив/<base>`); its incoming edges (the note's backlinks) must follow,
+ *  not be dropped — otherwise an archived note loses its backlinks AND the
+ *  active→archive link rule never sees the edge until the source is re-parsed
+ *  (the archival-moment gap). resolveWikilinks skips already-resolved `.md`
+ *  edges, so a dropped incoming edge is NOT self-healed. */
+function buildByBase(paths: Iterable<string>): Map<string, string[]> {
   const byBase = new Map<string, string[]>();
-  for (const p of existingPaths) {
+  for (const p of paths) {
     const base = path.basename(p);
     const list = byBase.get(base);
     if (list) list.push(p);
     else byBase.set(base, [p]);
   }
+  return byBase;
+}
 
+export function deleteMissingDocuments(db: CoreDb, existingPaths: Set<string>): number {
+  const rows = db.prepare("SELECT path FROM documents").all() as Array<{ path: string }>;
+  const stale = rows.map((row) => row.path).filter((docPath) => !existingPaths.has(docPath));
+  if (stale.length === 0) return 0;
+  removeDocuments(db, stale, buildByBase(existingPaths));
+  return stale.length;
+}
+
+/**
+ * Targeted deletion for the INCREMENTAL index path: remove exactly these
+ * docPaths (those that are actually indexed). Move detection runs against the
+ * SURVIVING documents — a rename delivers «new path indexed + old path gone»
+ * in one changed set, so the new location is already in `documents` by the
+ * time the old one is deleted here.
+ */
+export function deleteDocumentsByPaths(db: CoreDb, docPaths: string[]): number {
+  const stale = docPaths.filter((p) => documentExists(db, p));
+  if (stale.length === 0) return 0;
+  const staleSet = new Set(stale);
+  const surviving = (db.prepare("SELECT path FROM documents").all() as Array<{ path: string }>)
+    .map((r) => r.path)
+    .filter((p) => !staleSet.has(p));
+  removeDocuments(db, stale, buildByBase(surviving));
+  return stale.length;
+}
+
+function removeDocuments(db: CoreDb, stale: string[], byBase: Map<string, string[]>): void {
   const tx = db.transaction(() => {
     const deleteDoc = db.prepare("DELETE FROM documents WHERE path = ?");
     const deleteFts = db.prepare("DELETE FROM chunk_fts WHERE doc_path = ?");
@@ -420,6 +466,18 @@ export function deleteMissingDocuments(db: CoreDb, existingPaths: Set<string>): 
     const deleteIncoming = db.prepare("DELETE FROM edges WHERE target_path = ?");
     const repointIncoming = db.prepare(
       "UPDATE OR IGNORE edges SET target_path = ? WHERE target_path = ?",
+    );
+    // Genuine deletion: the `[[Target]]` text still sits in each SOURCE note,
+    // but the source is unchanged → its hash matches → it is never re-parsed
+    // → a silently dropped edge would resurface NOWHERE (resolveWikilinks
+    // walks only edges + unresolved_links). Park the incoming links in
+    // unresolved_links instead (reason 'missing', snippet preserved): the
+    // health surface sees the broken link, and the self-heal pass restores
+    // the edge if the note ever comes back (audit important — the
+    // «unresolvable links are NOT silently dropped» invariant).
+    const parkIncoming = db.prepare(
+      `INSERT OR IGNORE INTO unresolved_links (source_path, raw_target, reason, context_snippet)
+       SELECT source_path, ?, 'missing', context_snippet FROM edges WHERE target_path = ?`,
     );
     const deleteUnresolved = db.prepare("DELETE FROM unresolved_links WHERE source_path = ?");
     const deleteChunks = db.prepare("DELETE FROM chunks WHERE doc_path = ?");
@@ -432,11 +490,15 @@ export function deleteMissingDocuments(db: CoreDb, existingPaths: Set<string>): 
       // MOVE-aware incoming edges: a removed path whose basename now lives at
       // exactly ONE new location is a move → re-point its incoming edges there.
       // UPDATE OR IGNORE skips a collision (the source already links the new
-      // path); the deleteIncoming below then drops those skipped stale leftovers.
-      // No unique new home (genuine deletion / ambiguous basename) → plain delete.
+      // path); the deleteIncoming below then drops those skipped stale
+      // leftovers — they duplicate existing edges, silent deletion is right.
+      // No unique new home (genuine deletion / ambiguous basename) → park the
+      // incoming links as unresolved before dropping the edges.
       const moved = byBase.get(path.basename(docPath));
       if (moved && moved.length === 1 && moved[0] !== docPath) {
         repointIncoming.run(moved[0], docPath);
+      } else {
+        parkIncoming.run(path.basename(docPath, ".md"), docPath);
       }
       deleteIncoming.run(docPath);
       deleteUnresolved.run(docPath);
@@ -445,7 +507,6 @@ export function deleteMissingDocuments(db: CoreDb, existingPaths: Set<string>): 
   });
 
   tx();
-  return stale.length;
 }
 
 export function searchDocuments(db: CoreDb, params: { query: string; limit: number }): SearchRow[] {

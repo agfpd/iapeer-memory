@@ -830,7 +830,16 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
 
   const db = openDatabase(config, { migrateVecDimension: true });
   checkEmbeddingModelChanged(db, config.embedding);
-  checkParserChanged(db, PARSER_VERSION);
+  // The COMPOSITE fingerprint, not the bare version: stored chunks depend on
+  // chunkSize/chunkOverlap (boundaries) and the taxonomy locale (which links
+  // heading is stripped from the indexed text). Pre-fix, an operator changing
+  // IAPEER_MEMORY_CHUNK_SIZE (or the locale) restarted into an index that
+  // NEVER re-chunked — a permanent mix of old and new slicing (audit
+  // important: «affects the index but not the hash invalidation»).
+  checkParserChanged(
+    db,
+    `${PARSER_VERSION}:${config.search.chunkSize}:${config.search.chunkOverlap}:${config.locale}`,
+  );
   // One-shot GC of vec_chunks rows under dead rowids (pre-fix orphans from
   // the backfill↔reindex race, audit critical #1); steady-state a no-op.
   const orphans = gcOrphanVecChunks(db);
@@ -1283,7 +1292,15 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
     }
   }
 
-  async function flush(): Promise<void> {
+  /**
+   * One detect+index pass. Default INCREMENTAL: indexAll touches only the
+   * changed set (audit important — a single edit used to read+sha256 the
+   * whole vault). `full` forces the complete reconciliation walk — used by
+   * startup-adjacent callers: the poll/belt pass (its job is to catch what
+   * fs.watch MISSED, incremental would be blind to exactly that) and the
+   * runDetectPass test/operator hook.
+   */
+  async function flush(full = false): Promise<void> {
     const changed = new Set(pending);
     pending.clear();
     firstPendingAt = null;
@@ -1349,7 +1366,8 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
         config,
         logger,
         embed: backfillActive || shuttingDown ? false : undefined,
-      }); // incremental by content hash
+        changedPaths: full ? undefined : changed,
+      });
       renderFleetFragments("vault-change"); // docs/05: свежесть за секунды
       retryBackoffMs = 0;
       if (retryTimer) {
@@ -1456,10 +1474,12 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
     } catch (err) {
       logger.error(`watch-fallback snapshot failed: ${String(err)}`);
     }
-    // Full pipeline regardless of the diff: indexAll also covers folders
-    // OUTSIDE the monitored set, plus deletions — content-hash skip keeps
-    // the no-change case cheap.
-    flushing = flushing.then(() => flush()).catch((err) => {
+    // FULL pipeline regardless of the diff: this pass's whole job is to
+    // catch what fs.watch missed (dead/degraded watch, folders outside the
+    // snapshot's monitored set, unreported deletions) — the incremental mode
+    // is blind to exactly that. Content-hash skip keeps a no-change full
+    // walk cheap in IO terms relative to its cadence.
+    flushing = flushing.then(() => flush(true)).catch((err) => {
       logger.error(`watch-fallback pass failed: ${String(err)}`);
     });
   }
@@ -1644,7 +1664,9 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
         flushTimer = null;
       }
       await flushing;
-      await flush();
+      // FULL pass: the hook's contract is «force one complete detect pass» —
+      // tests and operators call it without knowing what fs.watch delivered.
+      await flush(true);
     },
     close: async () => {
       shuttingDown = true; // shutdown flush is structural-only (embed:false)

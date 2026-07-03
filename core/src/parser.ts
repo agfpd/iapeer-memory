@@ -11,7 +11,7 @@ import { linksSectionPattern, type TaxonomyPreset } from "./taxonomy.js";
  * under the new algorithm. Pure ranking/query changes that don't alter the
  * stored chunks do NOT need a bump.
  */
-export const PARSER_VERSION = "2";
+export const PARSER_VERSION = "3"; // 3: leading strip validated, whitespace-aware chunk split, CRLF divider
 
 const WIKILINK_RE = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
 
@@ -68,7 +68,14 @@ export type ParsedDocument = {
 };
 
 export function parseMarkdown(content: string, relativePath: string, chunkSize: number, chunkOverlap: number, taxonomy: TaxonomyPreset): ParsedDocument {
-  const parsed = matter(content);
+  // The explicit (empty) options object matters: optionless gray-matter
+  // writes every parse into a module-level cache KEYED BY THE FULL NOTE TEXT
+  // (~2-3× the note per entry, no eviction). In a long-lived memoryd that is
+  // a pure leak — the hash gate in indexFile means the cache never even gets
+  // a hit here (only changed content is re-parsed). Any options disable both
+  // the cache read and write; the parse defaults are identical (audit
+  // important).
+  const parsed = matter(content, {});
   const frontmatter = normalizeFrontmatter(parsed.data);
   const body = parsed.content.trim();
   const title = typeof frontmatter.title === "string" ? frontmatter.title : noteTitleFromPath(relativePath);
@@ -118,9 +125,29 @@ export function stripLinksSection(body: string, taxonomy: TaxonomyPreset): strin
   // instead of `\b` — JS \b is ASCII-only and useless after a cyrillic
   // letter (the strip silently no-op'd on every RU note before this fix).
   if (linksSectionPattern(taxonomy).test(body)) {
-    const dividerMatch = body.match(/\n---\s*\n/);
-    if (!dividerMatch || dividerMatch.index === undefined) return body;
-    return body.slice(dividerMatch.index + dividerMatch[0].length).trim();
+    // Validate the structure line by line, symmetric to the trailing branch:
+    // between the heading and the divider only link items (`-`/`*`) and
+    // blanks are allowed. Pre-fix this matched the FIRST `\n---\n` anywhere
+    // in the body — real content between the links block and a later
+    // horizontal rule (or a setext `---` underline) silently dropped out of
+    // chunks/FTS/embeddings (audit important). Non-conforming structure →
+    // no-op: index the whole body rather than lose any of it.
+    const lines = body.split("\n");
+    let d = -1;
+    for (let k = 1; k < lines.length; k++) {
+      const t = lines[k].trim();
+      if (/^[ \t]*-{3,}[ \t]*\r?$/.test(lines[k])) {
+        d = k;
+        break;
+      }
+      if (t === "" || t.startsWith("-") || t.startsWith("*")) continue;
+      return body; // a content line before any divider — not a leading links block
+    }
+    if (d === -1) return body;
+    return lines
+      .slice(d + 1)
+      .join("\n")
+      .trim();
   }
   // Trailing block: scan up from the end over link-list items / blanks; a
   // links heading there delimits a bottom block, a content line means there
@@ -141,7 +168,10 @@ export function stripLinksSection(body: string, taxonomy: TaxonomyPreset): strin
   let cut = h;
   let p = h - 1;
   while (p >= 0 && lines[p].trim() === "") p--;
-  if (p >= 0 && /^[ \t]*-{3,}[ \t]*$/.test(lines[p])) cut = p;
+  // \r? — a CRLF note (Windows editor / paste) keeps `\r` on the line after
+  // split("\n"); without it the divider above the trailing block was missed
+  // and a dangling `---` leaked into the indexed text.
+  if (p >= 0 && /^[ \t]*-{3,}[ \t]*\r?$/.test(lines[p])) cut = p;
   return lines.slice(0, cut).join("\n").trim();
 }
 
@@ -251,7 +281,9 @@ export function chunkText(
       const before = current.length;
       const splitIndex = findSplitIndex(current, chunkSize);
       pushChunk(chunks, current.slice(0, splitIndex).trim());
-      current = current.slice(Math.max(0, splitIndex - chunkOverlap)).trim();
+      current = current
+        .slice(alignSliceStart(current, Math.max(0, splitIndex - chunkOverlap)))
+        .trim();
       if (current.length >= before) {
         // Hard cut: drop the consumed prefix outright. Better a too-large
         // last chunk than a wedged indexer.
@@ -281,13 +313,38 @@ function pushChunk(chunks: { text: string }[], text: string): void {
 }
 
 function mergeOverlap(previous: string, next: string, overlap: number): string {
-  const tail = previous.slice(Math.max(0, previous.length - overlap)).trim();
+  const tail = previous
+    .slice(alignSliceStart(previous, Math.max(0, previous.length - overlap)))
+    .trim();
   return [tail, next].filter(Boolean).join("\n\n").trim();
 }
 
+/**
+ * Move a raw slice start LEFT to the nearest whitespace boundary so an
+ * overlap tail begins on a WHOLE token — a raw code-unit slice tears the
+ * word (or a surrogate pair) it lands inside, feeding torn halves into the
+ * next chunk's text. Falls back to the raw position when the prefix carries
+ * no whitespace at all (the pathological case chunkText's no-progress guard
+ * already backstops).
+ */
+function alignSliceStart(input: string, rawStart: number): number {
+  if (rawStart <= 0) return 0;
+  if (/\s/.test(input[rawStart - 1] ?? "")) return rawStart; // already on a boundary
+  const ws = Math.max(input.lastIndexOf(" ", rawStart), input.lastIndexOf("\n", rawStart));
+  return ws > 0 ? ws + 1 : rawStart;
+}
+
 function findSplitIndex(input: string, target: number): number {
+  // Prefer the LAST whitespace at or before target; a hard cut at target only
+  // when the window has no whitespace at all. The old form
+  // `Math.max(...candidates, Math.min(target, input.length))` always returned
+  // `target` (this function is only called when input.length > target, and
+  // every lastIndexOf ≤ target) — the whitespace logic was dead and every
+  // boundary cut mid-word / mid-surrogate-pair (audit important). The
+  // no-progress guard in chunkText still backstops the pathological
+  // whitespace-free case.
   const candidates = [input.lastIndexOf("\n", target), input.lastIndexOf(" ", target)].filter((index) => index > 0);
-  return Math.max(...candidates, Math.min(target, input.length));
+  return candidates.length ? Math.max(...candidates) : Math.min(target, input.length);
 }
 
 function normalizeFrontmatter(data: unknown): Record<string, unknown> {

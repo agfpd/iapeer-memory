@@ -382,3 +382,109 @@ describe("indexAll — eviction ≠ deletion (audit critical #2)", () => {
     expect(docCount()).toBe(1);
   });
 });
+
+describe("indexAll — incremental mode (audit important: O(changed), not O(vault))", () => {
+  function doc(rel: string) {
+    return db.prepare("SELECT path, title, content_hash FROM documents WHERE path = ?").get(rel.normalize("NFD")) as
+      | { path: string; title: string; content_hash: string }
+      | null;
+  }
+
+  it("re-indexes ONLY the changed path; links to unchanged notes still resolve", async () => {
+    writeNote("01_Знания/Стабильная.md", "---\ntitle: Стабильная\n---\nстарое тело");
+    writeNote("01_Знания/Правленая.md", "---\ntitle: Правленая\n---\nссылка на [[Стабильная]]");
+    await indexAll({ db, config, logger: noopLogger }); // full baseline
+
+    writeNote("01_Знания/Правленая.md", "---\ntitle: Правленая\n---\nновое тело, ссылка на [[Стабильная]]");
+    await indexAll({
+      db,
+      config,
+      logger: noopLogger,
+      changedPaths: [path.join(vault, "01_Знания/Правленая.md")],
+    });
+
+    // the change landed…
+    const chunks = db
+      .prepare("SELECT chunk_text FROM chunks WHERE doc_path = ?")
+      .all("01_Знания/Правленая.md".normalize("NFD")) as Array<{ chunk_text: string }>;
+    expect(chunks.map((c) => c.chunk_text).join(" ")).toContain("новое тело");
+    // …and the edge to the UNTOUCHED note resolved through the DB title map.
+    expect(edgeTargets("Правленая.md")).toEqual(["01_Знания/Стабильная.md".normalize("NFD")]);
+  });
+
+  it("a changed path missing on disk is deleted TARGETEDLY; incoming links park in unresolved_links", async () => {
+    writeNote("01_Знания/Цель.md", "---\ntitle: Цель\n---\nтело цели");
+    writeNote("01_Знания/Источник.md", "---\ntitle: Источник\n---\nсм. [[Цель]]");
+    await indexAll({ db, config, logger: noopLogger });
+    expect(doc("01_Знания/Цель.md")).not.toBeNull();
+
+    fs.rmSync(path.join(vault, "01_Знания/Цель.md"));
+    await indexAll({
+      db,
+      config,
+      logger: noopLogger,
+      changedPaths: [path.join(vault, "01_Знания/Цель.md")],
+    });
+
+    expect(doc("01_Знания/Цель.md")).toBeNull(); // gone from the index
+    expect(doc("01_Знания/Источник.md")).not.toBeNull(); // untouched survivor
+    // the broken link is VISIBLE (health) and self-heal-able, not silently dropped
+    const unresolved = getUnresolvedLinks(db);
+    expect(unresolved).toEqual([
+      { source: "01_Знания/Источник.md".normalize("NFD"), target: "Цель", reason: "missing" },
+    ]);
+
+    // …and self-heals when the note returns.
+    writeNote("01_Знания/Цель.md", "---\ntitle: Цель\n---\nтело вернулось");
+    await indexAll({
+      db,
+      config,
+      logger: noopLogger,
+      changedPaths: [path.join(vault, "01_Знания/Цель.md")],
+    });
+    expect(getUnresolvedLinks(db)).toEqual([]);
+    expect(edgeTargets("Источник.md")).toEqual(["01_Знания/Цель.md".normalize("NFD")]);
+  });
+
+  it("a rename delivered as one changed set repoints incoming edges (move-aware)", async () => {
+    writeNote("01_Знания/Старое имя заметки.md", "---\ntitle: Старое имя заметки\n---\nтело");
+    writeNote("01_Знания/Ссылающаяся.md", "---\ntitle: Ссылающаяся\n---\nсм. [[Старое имя заметки]]");
+    await indexAll({ db, config, logger: noopLogger });
+
+    // archive-style move: same basename, new folder
+    fs.mkdirSync(path.join(vault, "07_Архив"), { recursive: true });
+    fs.renameSync(
+      path.join(vault, "01_Знания/Старое имя заметки.md"),
+      path.join(vault, "07_Архив/Старое имя заметки.md"),
+    );
+    await indexAll({
+      db,
+      config,
+      logger: noopLogger,
+      changedPaths: [
+        path.join(vault, "07_Архив/Старое имя заметки.md"), // new location indexes first
+        path.join(vault, "01_Знания/Старое имя заметки.md"), // old location gone
+      ],
+    });
+
+    expect(doc("07_Архив/Старое имя заметки.md")).not.toBeNull();
+    expect(doc("01_Знания/Старое имя заметки.md")).toBeNull();
+    // incoming edge FOLLOWED the move — no unresolved entry
+    expect(edgeTargets("Ссылающаяся.md")).toEqual(["07_Архив/Старое имя заметки.md".normalize("NFD")]);
+    expect(getUnresolvedLinks(db)).toEqual([]);
+  });
+
+  it("changed paths in excluded folders and outside the vault are ignored", async () => {
+    writeNote("99_Система/Теги.md", "---\ntitle: Теги\n---\nслужебное");
+    await indexAll({
+      db,
+      config,
+      logger: noopLogger,
+      changedPaths: [
+        path.join(vault, "99_Система/Теги.md"),
+        "/somewhere/else/outside.md",
+      ],
+    });
+    expect(doc("99_Система/Теги.md")).toBeNull();
+  });
+});

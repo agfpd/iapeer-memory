@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { CoreConfig } from "./config.js";
 import type { CoreDb } from "./db.js";
-import { deleteMissingDocuments, countMissingDocuments, countDocuments, getStoredHash, getDocumentMeta, documentExists, upsertDocument, getChunksWithoutEmbeddings, storeChunkEmbeddings } from "./db.js";
+import { deleteMissingDocuments, deleteDocumentsByPaths, listDocumentTitles, countMissingDocuments, countDocuments, getStoredHash, getDocumentMeta, documentExists, upsertDocument, getChunksWithoutEmbeddings, storeChunkEmbeddings } from "./db.js";
 import { embedTexts, DEFAULT_INDEX_TIMEOUT_MS } from "./embedding.js";
 import { parseMarkdown, wikilinkBasename } from "./parser.js";
 import { hashContent, normalizeRelativePath, nowIso } from "./utils.js";
@@ -33,6 +33,17 @@ export async function indexAll(params: {
    * note's vector is ready promptly.
    */
   embed?: boolean;
+  /**
+   * INCREMENTAL mode (audit important: one edit used to read + sha256 the
+   * WHOLE vault): absolute fs paths the watcher reported. Only these are
+   * (re-)indexed; a path missing on disk is deleted from the index
+   * TARGETEDLY (move-aware — a rename delivers the new path in the same
+   * set). titleToPath is rebuilt from the documents table, so wikilink
+   * resolution stays complete without touching unchanged files. Omit for the
+   * FULL scan (startup, the poll/belt reconciliation passes) — only the full
+   * scan prunes documents whose deletion the watcher never reported.
+   */
+  changedPaths?: Iterable<string>;
 }): Promise<Map<string, string[]>> {
   const { db, config, logger } = params;
   const seenPaths = new Set<string>();
@@ -40,6 +51,60 @@ export async function indexAll(params: {
   // a basename (e.g. `Фаза — MVP` in two projects). The resolver treats >1 as
   // ambiguous instead of silently picking the last writer.
   const titleToPath = new Map<string, string[]>();
+
+  if (params.changedPaths) {
+    const scanParams: ScanRootParams = {
+      db,
+      basePath: config.vaultPath,
+      excludeFolders: new Set(config.excludeFolders),
+      config,
+      seenPaths,
+      logger,
+      titleToPath,
+    };
+    const deletedRel: string[] = [];
+    for (const abs of params.changedPaths) {
+      const rel = normalizeRelativePath(path.relative(config.vaultPath, abs));
+      if (rel.startsWith("..") || !rel.endsWith(".md")) continue;
+      if (scanParams.excludeFolders.has(rel.split("/")[0])) continue;
+      try {
+        await indexFile(scanParams, abs);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException)?.code;
+        if (code === "ENOENT") {
+          deletedRel.push(rel); // genuinely gone — targeted, move-aware delete
+        } else {
+          // Read/parse failure ≠ deletion (the eviction≠deletion invariant):
+          // keep serving the indexed copy, log, move on.
+          logger.warn(
+            `iapeer-memory: skip ${abs} — ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    }
+    if (deletedRel.length > 0) {
+      const removed = deleteDocumentsByPaths(db, deletedRel);
+      if (removed > 0) {
+        logger.info(`iapeer-memory: removed ${removed} deleted document(s) from index`);
+      }
+    }
+    // The resolver needs the map of ALL notes, not just the changed ones — a
+    // changed note linking [[UnchangedNote]] must still resolve. The titles
+    // already live in `documents` (the fresh upserts included).
+    for (const row of listDocumentTitles(db)) {
+      const titleKey = path.basename(row.path, ".md").normalize("NFC");
+      addTitlePath(titleToPath, titleKey, row.path);
+      const storedTitle = row.title?.normalize("NFC");
+      if (storedTitle && storedTitle !== titleKey) {
+        addTitlePath(titleToPath, storedTitle, row.path);
+      }
+    }
+    resolveWikilinks(db, titleToPath);
+    if (config.embedding && params.embed !== false) {
+      await embedMissingChunks({ db, config, logger });
+    }
+    return titleToPath;
+  }
 
   const scanOk = await scanRoot({
     db,
