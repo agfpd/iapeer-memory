@@ -41,7 +41,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { SKILL_BODIES, SKILL_DIR_PREFIX, SKILL_NAMES } from "../templates/skills.js";
-import { guardedWriteFileSync, guardedUnlinkSync, guardedRmSync } from "@agfpd/iapeer-memory-core";
+import { guardedWriteFileSync, guardedUnlinkSync, guardedRmSync, guardedRenameSync } from "@agfpd/iapeer-memory-core";
 
 export const MCP_SERVER_KEY = "iapeer-memory";
 /**
@@ -100,7 +100,7 @@ export function writeFileAtomic(filePath: string, content: string, mode?: number
   const tmp = `${filePath}.tmp`;
   guardedWriteFileSync(tmp, content, "utf-8");
   if (mode !== undefined) fs.chmodSync(tmp, mode);
-  fs.renameSync(tmp, filePath);
+  guardedRenameSync(tmp, filePath);
 }
 
 /** Materialise both hook shims (package-owned, bytes-compare). provision

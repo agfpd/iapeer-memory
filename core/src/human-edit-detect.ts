@@ -190,7 +190,21 @@ export function decideUpdate(input: DecideUpdateInput): DecideUpdateResult {
   const currentUpd = updMatch ? updMatch[1].trim() : null;
 
   const editAt = parseUpdated(currentUpd);
-  const isFresh = editAt !== null && (input.nowMs - editAt) / 1000 < windowS;
+  // Freshness relative to the FILE WRITE (mtime), OR-combined with the
+  // observation clock (audit important): the now-window measured «how long
+  // ago the daemon SAW the event», so an event delivered late — a sync-storm
+  // straggler, or the FIRST event after a daemon downtime during which an
+  // agent legitimately wrote through the hook — found a многочасовой stamp,
+  // called it stale and re-attributed the hook-stamped edit to the human
+  // (leb=human, needs_review re-flag, coauthors). |mtime − updated| < W means
+  // «the stamp was written by the same write as the content», however late
+  // the daemon looks at it. The now-window stays as the second arm: an event
+  // that itself bumps mtime (touch, save-without-change) would fail the
+  // mtime arm even for a genuinely fresh hook write.
+  const isFresh =
+    editAt !== null &&
+    ((input.nowMs - editAt) / 1000 < windowS ||
+      Math.abs(input.mtimeMs - editAt) / 1000 < windowS);
 
   // Case 1: our own echo — our write came back through the fs watch.
   if (currentLeb === input.human && isFresh) {

@@ -21,7 +21,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { IAPEER_BIN, type Egress } from "./egress.js";
-import { guardedWriteFileSync, sandboxBlocksProdRead } from "@agfpd/iapeer-memory-core";
+import { guardedWriteFileSync, sandboxBlocksProdRead, guardedRenameSync } from "@agfpd/iapeer-memory-core";
 
 export type FleetMapResult = {
   action: "written" | "failed";
@@ -155,7 +155,7 @@ export function writeFleetMap(
   fs.mkdirSync(path.dirname(opts.fleetMapPath), { recursive: true });
   const tmp = `${opts.fleetMapPath}.tmp`;
   guardedWriteFileSync(tmp, body, "utf-8");
-  fs.renameSync(tmp, opts.fleetMapPath); // atomic — memoryd may race a read
+  guardedRenameSync(tmp, opts.fleetMapPath); // atomic — memoryd may race a read
   return {
     action: "written",
     count: peers.length,

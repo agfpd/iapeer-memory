@@ -18,7 +18,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { guardedRmSync } from "@agfpd/iapeer-memory-core";
+import { guardedRmSync, guardedRenameSync } from "@agfpd/iapeer-memory-core";
 import { countDocsFiles, pruneLocalDocs } from "./sync-docs.js";
 
 /** This package's SHIPPED `docs/` — a sibling of `src/` in the published
@@ -58,6 +58,6 @@ export function scaffoldHostDocs(opts: {
   pruneLocalDocs(tmp);
   // Atomic swap: replace the live tree with a single rename.
   guardedRmSync(destDir, { recursive: true, force: true });
-  fs.renameSync(tmp, destDir);
+  guardedRenameSync(tmp, destDir);
   return { action: "written", detail: `${countDocsFiles(destDir)} files → ${destDir}` };
 }

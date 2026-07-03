@@ -53,8 +53,8 @@ const RULES: Rule[] = [
     allowedFiles: ["egress.ts", "http-client.ts"],
   },
   {
-    name: "raw writes/removals go through the fs-guard wrappers",
-    pattern: /\bfs\.writeFileSync\(|\bBun\.write\(|\bfs\.rmSync\(|\bfs\.unlinkSync\(/,
+    name: "raw writes/removals/renames go through the fs-guard wrappers",
+    pattern: /\bfs\.writeFileSync\(|\bBun\.write\(|\bfs\.rmSync\(|\bfs\.unlinkSync\(|\bfs\.renameSync\(/,
     allowedFiles: ["fs-guard.ts"],
   },
 ];

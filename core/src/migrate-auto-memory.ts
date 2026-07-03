@@ -32,7 +32,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { TaxonomyPreset } from "./taxonomy.js";
 import { yamlSafeScalar } from "./fm-update.js";
-import { guardedWriteFileSync, guardedUnlinkSync } from "./fs-guard.js";
+import { guardedWriteFileSync, guardedUnlinkSync, guardedRenameSync } from "./fs-guard.js";
 
 /** Source files that are backed up but never copied into the vault. */
 export const SKIP_FILES: ReadonlySet<string> = new Set(["MEMORY.md"]);
@@ -273,7 +273,7 @@ export function applyMigration(opts: {
     try {
       const tmp = `${targetFile}.tmp`;
       guardedWriteFileSync(tmp, newText, "utf-8");
-      fs.renameSync(tmp, targetFile);
+      guardedRenameSync(tmp, targetFile);
     } catch (err) {
       errors.push(`${name}: write failed — ${String(err)}`);
       continue; // source untouched — write failed

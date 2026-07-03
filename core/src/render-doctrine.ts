@@ -24,7 +24,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { guardedWriteFileSync, guardedUnlinkSync } from "./fs-guard.js";
+import { guardedWriteFileSync, guardedUnlinkSync, guardedRenameSync } from "./fs-guard.js";
 
 /** `<!-- iapeer-memory doctrine v<version> -->` — machine-checkable. */
 export function versionMarker(version: string): string {
@@ -95,7 +95,7 @@ export function renderDoctrine(opts: {
   );
   try {
     guardedWriteFileSync(tmp, rendered, "utf-8");
-    fs.renameSync(tmp, target);
+    guardedRenameSync(tmp, target);
   } catch (err) {
     try {
       if (fs.existsSync(tmp)) guardedUnlinkSync(tmp);

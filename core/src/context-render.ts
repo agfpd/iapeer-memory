@@ -27,7 +27,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { guardedWriteFileSync, guardedUnlinkSync } from "./fs-guard.js";
+import { guardedWriteFileSync, guardedUnlinkSync, guardedRenameSync } from "./fs-guard.js";
 
 export const FRAGMENT_STEM = "iapeer-memory.md";
 
@@ -146,7 +146,7 @@ export function writeFragmentAtomic(
   );
   try {
     guardedWriteFileSync(tmp, text, "utf-8");
-    fs.renameSync(tmp, target);
+    guardedRenameSync(tmp, target);
   } catch (err) {
     try {
       if (fs.existsSync(tmp)) guardedUnlinkSync(tmp);

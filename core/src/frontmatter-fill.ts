@@ -42,7 +42,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import type { TaxonomyPreset } from "./taxonomy.js";
 import { DEFAULT_CURATOR_SET, genreForFolder } from "./taxonomy.js";
-import { guardedWriteFileSync, guardedUnlinkSync } from "./fs-guard.js";
+import { guardedWriteFileSync, guardedUnlinkSync, guardedRenameSync } from "./fs-guard.js";
 
 const FRONTMATTER_RE = /^---[^\S\n]*\n([\s\S]*?\n)---[^\S\n]*(?:\n|$)/;
 
@@ -502,6 +502,41 @@ export function stripBrokenDelims(v: string): string {
 }
 
 /**
+ * `v` is a syntactically COMPLETE flow collection (`[..]` / `{..}`): brackets
+ * balance to zero exactly at the end, respecting quoted spans. Such a value is
+ * valid YAML as-is — quoting it would turn a real array/map into a string
+ * (audit important: Obsidian `aliases: [A, B]` became the string "[A, B]" and
+ * alias resolution died). A double-bracket opener (`[[…]]`) is deliberately
+ * NOT treated as a flow collection: it is wikilink intent, and quoting it into
+ * a string is the useful behaviour, not nested-array parsing.
+ */
+export function isBalancedFlowCollection(v: string): boolean {
+  const open = v[0];
+  if (open !== "[" && open !== "{") return false;
+  if (v.startsWith("[[")) return false; // wikilink intent — keep quoting
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = 0; i < v.length; i++) {
+    const ch = v[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "[" || ch === "{") depth += 1;
+    else if (ch === "]" || ch === "}") {
+      depth -= 1;
+      if (depth < 0) return false;
+      if (depth === 0) return i === v.length - 1; // closed exactly at the end
+    }
+  }
+  return false; // dangling opener («[висячая») — still needs quoting
+}
+
+/**
  * Return the YAML-safe representation of a scalar value, or null when no
  * edit is needed (already valid / empty / block scalar). `raw` is the text
  * after `key:`.
@@ -510,6 +545,7 @@ export function normalizeScalarValue(raw: string): string | null {
   const v = raw.trim();
   if (!v || v[0] === "|" || v[0] === ">") return null;
   if (isCleanDoubleQuoted(v) || isCleanSingleQuoted(v)) return null;
+  if (isBalancedFlowCollection(v)) return null; // valid inline array/map — hands off
   if (!yamlNeedsQuoting(v)) return null;
   return yamlDoubleQuote(stripBrokenDelims(v));
 }
@@ -676,7 +712,7 @@ export function atomicWrite(filePath: string, content: string): void {
   );
   try {
     guardedWriteFileSync(tmp, content, "utf-8");
-    fs.renameSync(tmp, filePath);
+    guardedRenameSync(tmp, filePath);
   } catch (err) {
     try {
       if (fs.existsSync(tmp)) guardedUnlinkSync(tmp);

@@ -362,3 +362,68 @@ describe("yaml-safe serialisation (shared normaliser)", () => {
     expect(fm.toText()).toBe('description: "Текст: двоеточие"\n');
   });
 });
+
+describe("Frontmatter — conservative round-trip (audit important: valid YAML outside the model must survive)", () => {
+  it("a block scalar survives a --set pass verbatim", () => {
+    const src = "title: X\ndescription: |\n  Длинное описание,\n  на две строки.\nstatus: актуально\n";
+    const fm = Frontmatter.fromText(src);
+    fm.setScalar("status", "устарело");
+    const out = fm.toText();
+    expect(out).toContain("description: |\n  Длинное описание,\n  на две строки.");
+    expect(out).toContain("status: устарело");
+  });
+
+  it("a nested map survives verbatim; a --set on ITS key replaces it (operator wins)", () => {
+    const src = "title: X\nextra:\n  nested: v\n  deeper: w\n";
+    const fm = Frontmatter.fromText(src);
+    expect(fm.toText()).toContain("extra:\n  nested: v\n  deeper: w");
+    fm.setScalar("extra", "plain");
+    expect(fm.toText()).toContain("extra: plain");
+    expect(fm.toText()).not.toContain("nested");
+  });
+
+  it("ZERO-indent list items are the list, not orphans", () => {
+    const src = "tags:\n- security\n- ops\ntitle: X\n";
+    const fm = Frontmatter.fromText(src);
+    const out = fm.toText();
+    expect(out).toContain("tags:\n  - security\n  - ops");
+    expect(out).toContain("title: X");
+  });
+
+  it("a non-ASCII (cyrillic) user key is preserved verbatim", () => {
+    const src = "title: X\nМой ключ: моё значение\nstatus: актуально\n";
+    const fm = Frontmatter.fromText(src);
+    const out = fm.toText();
+    expect(out).toContain("Мой ключ: моё значение");
+    expect(out).toContain("status: актуально");
+  });
+
+  it("a TRUE orphan (lone `- value`, the sed-artifact class) is still dropped", () => {
+    const src = "title: X\n\n- висячий артефакт\nstatus: актуально\n";
+    const fm = Frontmatter.fromText(src);
+    const out = fm.toText();
+    expect(out).not.toContain("висячий");
+    expect(out).toContain("title: X");
+    expect(out).toContain("status: актуально");
+  });
+
+  it("updateFile: --set status on a note with a block-scalar description keeps the description (the audit scenario)", () => {
+    const td = fs.mkdtempSync(path.join(os.tmpdir(), "fmupd-raw-"));
+    const p = path.join(td, "note.md");
+    fs.writeFileSync(
+      p,
+      "---\ntitle: N\ndescription: |\n  Ценные две строки,\n  которые нельзя терять.\nstatus: актуально\n---\n\nТело.\n",
+    );
+    try {
+      const changed = updateFile(p, [{ kind: "set", key: "status", value: "устарело" }]);
+      expect(changed).toBe(true);
+      const out = fs.readFileSync(p, "utf-8");
+      expect(out).toContain("status: устарело");
+      expect(out).toContain("Ценные две строки,");
+      expect(out).toContain("которые нельзя терять.");
+      expect(out).toContain("Тело.");
+    } finally {
+      fs.rmSync(td, { recursive: true, force: true });
+    }
+  });
+});

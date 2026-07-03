@@ -1063,3 +1063,78 @@ describe("memoryd.e2e — embed backfill retries after an endpoint outage (audit
     }
   });
 });
+
+describe("memoryd.e2e — human checkbox-clear survives after a recent agent edit (audit important, prevSmart plumbing)", () => {
+  it("clearing needs_review in Obsidian after an agent's content edit is NOT reverted", async () => {
+    const ctmp = fs.mkdtempSync(path.join(os.tmpdir(), "iapeer-memory-checkbox-"));
+    const cvault = path.join(ctmp, "vault");
+    fs.mkdirSync(path.join(cvault, T.folders.knowledge), { recursive: true });
+    const notePath = path.join(cvault, T.folders.knowledge, "Ревьюируемая.md");
+    // Baseline content — snapshotted into permanentBaseline at startup (H0).
+    fs.writeFileSync(
+      notePath,
+      `---\ntitle: Ревьюируемая\nauthor: linus\ntype: ${T.types.knowledge}\nstatus: ${T.statusTokens.current}\nlast_edited_by: linus\nupdated: ${formatStamp(new Date(Date.now() - 3600_000))}\nneeds_review: false\n---\n\nстарое тело\n`,
+      "utf-8",
+    );
+    const h = await startMemoryd({
+      config: {
+        ...makeConfig(),
+        vaultPath: cvault,
+        index: { dbPath: path.join(ctmp, "cb.db"), fullScanOnStartup: true },
+      },
+      emit: () => {},
+      mcpPort: null,
+      debounceMs: 40,
+      humanName: "artur",
+      freshEditWindowS: 1, // shrink the echo window so the test runs in seconds
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+    });
+    try {
+      // 1. The AGENT edits content through the hook path (fresh stamp) —
+      //    semantic hash moves H0 → H1; the flush records H1 in silentStamps.
+      fs.writeFileSync(
+        notePath,
+        `---\ntitle: Ревьюируемая\nauthor: linus\ntype: ${T.types.knowledge}\nstatus: ${T.statusTokens.current}\nlast_edited_by: linus\nupdated: ${formatStamp(new Date())}\nneeds_review: true\n---\n\nновое тело от агента\n`,
+        "utf-8",
+      );
+      await sleep(600); // fs.watch → debounce → flush (stamp fresh → echo-agent skip)
+
+      // 2. Past the echo window, the HUMAN clears the checkbox — the ONLY
+      //    change is needs_review: true → false (service field; semantic
+      //    hash stays H1).
+      await sleep(1_200);
+      const current = fs.readFileSync(notePath, "utf-8");
+      fs.writeFileSync(notePath, current.replace("needs_review: true", "needs_review: false"), "utf-8");
+      await sleep(1_000); // flush judges: prevSmart(H1) == curSmart(H1) → service-only skip
+
+      const after = fs.readFileSync(notePath, "utf-8");
+      // Pre-fix: prevSmartHash came from the 6h-frozen startup baseline (H0)
+      // ≠ H1 → the guard whiffed → needs_review forced back to true,
+      // leb=artur, artur into coauthors. Post-fix the clear PERSISTS.
+      expect(after).toContain("needs_review: false");
+      expect(after).not.toContain("last_edited_by: artur");
+      expect(after).not.toContain("coauthors");
+      expect(after).toContain("новое тело от агента");
+    } finally {
+      await h.close();
+      fs.rmSync(ctmp, { recursive: true, force: true });
+    }
+  }, 15_000);
+});
+
+describe("memoryd.e2e — sandbox door belt (audit important, fs-guard finding)", () => {
+  it("refuses to start under the test sandbox over a production vault path", async () => {
+    await expect(
+      startMemoryd({
+        config: {
+          ...makeConfig(),
+          vaultPath: path.join(os.homedir(), ".iapeer", "definitely-prod-vault"),
+          index: { dbPath: path.join(tmpdir, "door.db"), fullScanOnStartup: true },
+        },
+        emit: () => {},
+        mcpPort: null,
+        logger: { info: () => {}, warn: () => {}, error: () => {} },
+      }),
+    ).rejects.toThrow(/production vault/);
+  });
+});

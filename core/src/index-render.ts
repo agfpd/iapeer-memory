@@ -28,7 +28,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import type { RankingConfig, TaxonomyPreset } from "./taxonomy.js";
 import { statusGroup as taxonomyStatusGroup } from "./taxonomy.js";
-import { guardedWriteFileSync, guardedUnlinkSync } from "./fs-guard.js";
+import { guardedWriteFileSync, guardedUnlinkSync, guardedRenameSync } from "./fs-guard.js";
 
 const WIKILINK_RE = /\[\[([^\]|#]+)/g;
 const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n/;
@@ -823,7 +823,7 @@ export function atomicWrite(filePath: string, content: string): void {
   const tmp = path.join(dir, `.vault-index-${crypto.randomBytes(6).toString("hex")}.tmp`);
   try {
     guardedWriteFileSync(tmp, content, "utf-8");
-    fs.renameSync(tmp, filePath);
+    guardedRenameSync(tmp, filePath);
   } catch (err) {
     try {
       if (fs.existsSync(tmp)) guardedUnlinkSync(tmp);

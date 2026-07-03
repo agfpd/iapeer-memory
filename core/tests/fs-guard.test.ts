@@ -9,6 +9,7 @@ import {
   sandboxBlocksProdRead,
   assertSandboxWritablePath,
   guardedWriteFileSync,
+  guardedRenameSync,
   guardedUnlinkSync,
   guardedRmSync,
 } from "../src/fs-guard.js";
@@ -47,6 +48,15 @@ describe("isUnderProdAnchor — the predicate (checkable without arming a write)
 describe("the belt under the armed sandbox env", () => {
   it("the env is armed in this run (preload)", () => {
     expect(sandboxEnvArmed()).toBe(true);
+  });
+
+  it("rename is IN the belt: either end under a prod anchor refuses (audit important)", () => {
+    const os = require("node:os");
+    const prod = `${os.homedir()}/.iapeer/plugins/iapeer-memory/note.md`;
+    // data LEAVING a prod location (the archiveStaleNotes class)…
+    expect(() => guardedRenameSync(prod, "/tmp/anywhere.md")).toThrow("production anchor");
+    // …and data LANDING in one — both ends are asserted.
+    expect(() => guardedRenameSync("/tmp/anywhere.md", prod)).toThrow("production anchor");
   });
 
   it("a write into a prod anchor throws BEFORE touching the disk", () => {

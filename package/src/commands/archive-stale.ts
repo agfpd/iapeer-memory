@@ -23,6 +23,7 @@ import {
   snapshotVault,
   shouldArchive,
   archiveTargetRel,
+  guardedRenameSync,
 } from "@agfpd/iapeer-memory-core";
 
 export function cmdArchiveStale(argv: string[]): number {
@@ -74,7 +75,7 @@ export function cmdArchiveStale(argv: string[]): number {
     const toAbs = path.join(vault, m.to);
     try {
       fs.mkdirSync(path.dirname(toAbs), { recursive: true });
-      fs.renameSync(path.join(vault, m.from), toAbs);
+      guardedRenameSync(path.join(vault, m.from), toAbs);
       moved += 1;
       console.log(`  moved: ${m.from}  →  ${m.to}`);
     } catch (err) {

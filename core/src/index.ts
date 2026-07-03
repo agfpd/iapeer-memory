@@ -132,4 +132,5 @@ export {
   guardedWriteFileSync,
   guardedUnlinkSync,
   guardedRmSync,
+  guardedRenameSync,
 } from "./fs-guard.js";

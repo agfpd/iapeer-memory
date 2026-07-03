@@ -163,3 +163,18 @@ export function guardedRmSync(
   assertSandboxWritablePath(filePath, "rm");
   fs.rmSync(filePath, options);
 }
+
+/**
+ * rename joined the belt LAST (audit important): every other mutation was
+ * funnelled, but a bare fs.renameSync MOVED prod data with the belt silent —
+ * archiveStaleNotes relocating live team notes into the prod archive from a
+ * sandboxed daemon was exactly incident-class №2 the belt was built for.
+ * BOTH ends are asserted: the source (data leaves a prod location) and the
+ * destination (data lands in one). tmp-swap renames (guarded tmp write in
+ * the same directory) pass trivially — both paths share the directory.
+ */
+export function guardedRenameSync(oldPath: string, newPath: string): void {
+  assertSandboxWritablePath(oldPath, "rename-from");
+  assertSandboxWritablePath(newPath, "rename-to");
+  fs.renameSync(oldPath, newPath);
+}

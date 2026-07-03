@@ -36,7 +36,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { IAPEER_BIN, type Egress } from "./egress.js";
-import { guardedWriteFileSync } from "@agfpd/iapeer-memory-core";
+import { guardedWriteFileSync, guardedRenameSync } from "@agfpd/iapeer-memory-core";
 
 export const WATCHER_TRIGGER_ID = "iapeer-memory-memoryd";
 /** Weekly DreamWeaver tick. A notifier TIMER straight to DreamWeaver, GATED
@@ -75,7 +75,7 @@ function writeExecutable(filePath: string, content: string): "written" | "identi
   const tmp = `${filePath}.tmp`;
   guardedWriteFileSync(tmp, content, "utf-8");
   fs.chmodSync(tmp, 0o755);
-  fs.renameSync(tmp, filePath);
+  guardedRenameSync(tmp, filePath);
   return "written";
 }
 
@@ -133,7 +133,7 @@ export function patchWakePolicyEphemeral(
   profile.wake_policy = "ephemeral";
   const tmp = `${profilePath}.tmp`;
   guardedWriteFileSync(tmp, `${JSON.stringify(profile, null, 2)}\n`, "utf-8");
-  fs.renameSync(tmp, profilePath);
+  guardedRenameSync(tmp, profilePath);
   return "written";
 }
 

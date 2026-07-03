@@ -32,6 +32,7 @@ import {
   guardedWriteFileSync,
   guardedUnlinkSync,
   sandboxBlocksProdRead,
+  guardedRenameSync,
 } from "@agfpd/iapeer-memory-core";
 
 export const SLOT_PROVIDER = "iapeer-memory";
@@ -140,7 +141,7 @@ export function writeSlot(opts: {
   fs.mkdirSync(path.dirname(opts.slotPath), { recursive: true });
   const tmp = `${opts.slotPath}.tmp`;
   guardedWriteFileSync(tmp, JSON.stringify(slot, null, 2) + "\n", "utf-8");
-  fs.renameSync(tmp, opts.slotPath);
+  guardedRenameSync(tmp, opts.slotPath);
   return { action: "written", existing };
 }
 

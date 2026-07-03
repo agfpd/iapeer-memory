@@ -68,7 +68,7 @@ import {
   type RenderContext,
 } from "./index-render.js";
 import { renderPeerFragment, type FragmentEnv } from "./context-render.js";
-import { guardedWriteFileSync, guardedUnlinkSync, sandboxBlocksProdRead } from "./fs-guard.js";
+import { guardedWriteFileSync, guardedUnlinkSync, sandboxBlocksProdRead, guardedRenameSync, sandboxEnvArmed, isUnderProdAnchor } from "./fs-guard.js";
 import {
   isSilentEdit,
   readStampRecord,
@@ -598,7 +598,7 @@ export function persistBatchState(
     }),
     "utf-8",
   );
-  fs.renameSync(tmp, filePath);
+  guardedRenameSync(tmp, filePath);
 }
 
 export function loadHashState(filePath: string): Map<string, string> {
@@ -618,7 +618,7 @@ export function persistHashState(filePath: string, map: Map<string, string>): vo
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tmp = `${filePath}.tmp`;
   guardedWriteFileSync(tmp, JSON.stringify(Object.fromEntries(map)), "utf-8");
-  fs.renameSync(tmp, filePath);
+  guardedRenameSync(tmp, filePath);
 }
 
 // ── the daemon ───────────────────────────────────────────────────────────────
@@ -824,6 +824,18 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
   // update. While the backfill catches up, search degrades to BM25-only for
   // not-yet-embedded chunks (search.ts graceful degradation) and gains vectors
   // as they fill in.
+  // Sandbox belt at the DOOR (audit important, fs-guard finding): a sandboxed
+  // process pointed at the LIVE vault (an inherited IAPEER_MEMORY_VAULT_PATH,
+  // a test config naming prod) must refuse to start at all — per-operation
+  // guards catch writes, but a daemon over the prod vault also READS team
+  // notes and archives them; refusing the start closes the whole class.
+  if (sandboxEnvArmed() && isUnderProdAnchor(config.vaultPath)) {
+    throw new Error(
+      `memoryd: refusing to start under the test sandbox over a production vault (${config.vaultPath}) — ` +
+        "point IAPEER_MEMORY_VAULT_PATH at a sandbox tmp vault",
+    );
+  }
+
   // Single-writer lock BEFORE the database opens (audit important): a second
   // memoryd on the same vault/DB must die here, not after it has already run
   // a full indexAll as a second writer.
@@ -1016,7 +1028,7 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
       fs.mkdirSync(path.dirname(tagsMirrorPath), { recursive: true });
       const tmp = `${tagsMirrorPath}.tmp`;
       guardedWriteFileSync(tmp, srcContent!, "utf-8");
-      fs.renameSync(tmp, tagsMirrorPath);
+      guardedRenameSync(tmp, tagsMirrorPath);
       mirrorContent = srcContent;
       logger.info(`tags mirror updated (${decision.reason})`);
     }
@@ -1040,7 +1052,7 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
     fs.mkdirSync(path.dirname(tagsProjectionPath), { recursive: true });
     const tmp = `${tagsProjectionPath}.tmp`;
     guardedWriteFileSync(tmp, proj, "utf-8");
-    fs.renameSync(tmp, tagsProjectionPath);
+    guardedRenameSync(tmp, tagsProjectionPath);
     logger.info("tags projection updated");
   }
 
@@ -1105,7 +1117,7 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
       const tmp = `${abs}.memoryd.tmp`;
       try {
         guardedWriteFileSync(tmp, restamped, "utf-8");
-        fs.renameSync(tmp, abs);
+        guardedRenameSync(tmp, abs);
         silentStamps.set(rel, readStampRecord(restamped));
         logger.info(`silent edit re-stamped (${zone}): ${rel}`);
       } catch (err) {
@@ -1119,7 +1131,7 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
     }
   }
 
-  function humanEditPass(changedAbs: Set<string>): void {
+  function humanEditPass(changedAbs: Set<string>, prevSmart?: Map<string, string>): void {
     const human = opts.humanName ?? null;
     if (!human) return; // ⚖7: no human role — detection off
     for (const filePath of changedAbs) {
@@ -1157,11 +1169,18 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
         lastHash: lastSeenHashes.get(filePath) ?? null,
         taxonomy,
         freshEditWindowS: opts.freshEditWindowS,
-        // Service-only guard source: the carried smart-hash baseline. When the
-        // current semantic hash still equals it, only service fields moved
-        // (checkbox toggle / service backfill) → decideUpdate skips, no revert.
+        // Service-only guard source, PER-PASS first (audit important): the
+        // pre-pass silentStamps snapshot carries the semantic hash as of the
+        // LAST pass — the 6h-frozen permanentBaseline missed every semantic
+        // edit since the tick, so a human's checkbox-clear of needs_review
+        // after an agent's recent content edit compared against a stale hash,
+        // the guard whiffed, and the clear was REVERTED (flag forced back,
+        // human falsely into coauthors). Baseline stays as the fallback for
+        // files without a silentStamps record yet.
         prevSmartHash:
-          permanentBaseline.get(path.relative(config.vaultPath, filePath)) ?? null,
+          prevSmart?.get(filePath) ??
+          permanentBaseline.get(path.relative(config.vaultPath, filePath)) ??
+          null,
       });
       if (decision.action === "skip") {
         if (decision.recordHash !== null) lastSeenHashes.set(filePath, decision.recordHash);
@@ -1170,7 +1189,7 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
       const tmp = `${filePath}.memoryd.tmp`;
       try {
         guardedWriteFileSync(tmp, decision.newContent, "utf-8");
-        fs.renameSync(tmp, filePath);
+        guardedRenameSync(tmp, filePath);
         lastSeenHashes.set(filePath, decision.recordHash);
         logger.info(`human-edit ${decision.reason}: ${path.relative(config.vaultPath, filePath)}`);
       } catch (err) {
@@ -1210,7 +1229,7 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
       const targetAbs = path.join(config.vaultPath, targetRel);
       try {
         fs.mkdirSync(path.dirname(targetAbs), { recursive: true });
-        fs.renameSync(abs, targetAbs);
+        guardedRenameSync(abs, targetAbs);
         silentStamps.delete(rel); // baselines follow the move
         lastSeenHashes.delete(abs);
         moved += 1;
@@ -1279,7 +1298,7 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
       const tmp = `${abs}.memoryd.tmp`;
       try {
         guardedWriteFileSync(tmp, cleared, "utf-8");
-        fs.renameSync(tmp, abs);
+        guardedRenameSync(tmp, abs);
         const rel = path.relative(config.vaultPath, abs);
         lastSeenHashes.set(abs, sha256(cleared));
         silentStamps.set(rel, readStampRecord(cleared));
@@ -1353,7 +1372,7 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
       // (smart-hash blindness = echo safety of our own re-stamp).
       silentEditPass(changed);
 
-      humanEditPass(changed);
+      humanEditPass(changed, prevSmart);
       curatorClearPass(changed, prevSmart); // needs_review closure: Index curation auto-clears the flag
       archiveStaleNotes(changed); // lean §2.2a — stale → archive before reindex
       syncTagsMirror();

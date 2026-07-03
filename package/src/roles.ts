@@ -12,7 +12,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { guardedWriteFileSync } from "@agfpd/iapeer-memory-core";
+import { guardedWriteFileSync, guardedRenameSync } from "@agfpd/iapeer-memory-core";
 
 export type RoleEntry = { role: string; peerCwd: string; template: string };
 
@@ -29,7 +29,7 @@ export function writeRolesManifest(opts: {
     JSON.stringify({ roles: opts.roles } satisfies RolesManifest, null, 2) + "\n",
     "utf-8",
   );
-  fs.renameSync(tmp, opts.rolesManifestPath);
+  guardedRenameSync(tmp, opts.rolesManifestPath);
 }
 
 /** Never throws: absent/malformed → null (verify treats it as "init has not run"). */

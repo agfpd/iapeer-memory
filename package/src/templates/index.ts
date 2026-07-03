@@ -16,7 +16,7 @@ import path from "node:path";
 import type { LocaleId } from "@agfpd/iapeer-memory-core";
 import { GUIDE_EN } from "./guide-en.js";
 import { GUIDE_RU } from "./guide-ru.js";
-import { guardedWriteFileSync } from "@agfpd/iapeer-memory-core";
+import { guardedWriteFileSync, guardedRenameSync } from "@agfpd/iapeer-memory-core";
 import {
   SCRIBER_DOCTRINE_EN,
   DREAMWEAVER_DOCTRINE_EN,
@@ -154,7 +154,7 @@ export function materialiseTemplates(opts: {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const tmp = `${file}.tmp`;
     guardedWriteFileSync(tmp, content, "utf-8");
-    fs.renameSync(tmp, file);
+    guardedRenameSync(tmp, file);
     written.push(file);
   }
   return { written, identical };

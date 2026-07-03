@@ -488,3 +488,28 @@ describe("smoke: detect pipeline on a test vault", () => {
     expect(diffSnapshots(prev, snapshotVault(vault, TAXONOMY_RU))).toEqual([]);
   });
 });
+
+describe("human-edit-detect: freshness via the mtime arm (audit important — late-observed events)", () => {
+  it("a hook-stamped edit observed HOURS later (daemon downtime / sync straggler) stays echo-agent", () => {
+    // The stamp is многочасовой by the observation clock, but it was written
+    // by the SAME write as the content: |mtime − updated| ≈ 0. Pre-fix the
+    // now-window alone called it stale and re-attributed the edit to the
+    // human (leb=human, needs_review re-flag, coauthors).
+    const writeTime = NOW - 5 * 3600_000; // 5 hours before the daemon looks
+    const stamp = formatStamp(new Date(writeTime));
+    const content = `---\ntitle: X\nauthor: linus\nlast_edited_by: linus\nupdated: ${stamp}\n---\n\nbody`;
+    const r = decide({ content, mtimeMs: writeTime + 3_000 }); // written together
+    expect(r.action).toBe("skip");
+    expect(r.reason).toBe("echo-agent");
+  });
+
+  it("an event that itself bumps mtime does NOT get the mtime arm — the genuine external-edit path is intact", () => {
+    const writeTime = NOW - 5 * 3600_000;
+    const stamp = formatStamp(new Date(writeTime));
+    const content = `---\ntitle: X\nauthor: linus\nlast_edited_by: linus\nupdated: ${stamp}\n---\n\nbody`;
+    // mtime = now (touch / editor re-save): both arms stale → the stamp path
+    // runs as before the fix.
+    const r = decide({ content, mtimeMs: NOW });
+    expect(r.action).toBe("write");
+  });
+});

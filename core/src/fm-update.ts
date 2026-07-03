@@ -47,10 +47,11 @@ import {
   stripBrokenDelims,
   yamlDoubleQuote,
   yamlNeedsQuoting,
+  BLOCK_LIST_ITEM_RE,
+  BLOCK_LIST_ITEM_CAPTURE_RE,
 } from "./frontmatter-fill.js";
 
 const KEY_RE = /^([A-Za-z_][\w-]*)\s*:\s*(.*?)\s*$/;
-const ITEM_RE = /^\s+-\s+(.*?)\s*$/;
 
 export class Scalar {
   constructor(public value: string) {}
@@ -60,7 +61,21 @@ export class FmList {
   constructor(public items: string[] = []) {}
 }
 
-export type Entry = Scalar | FmList;
+/**
+ * An opaque run of source lines the round-trip model does NOT understand —
+ * block scalars (`key: |` + indented body), nested maps (`key:` + indented
+ * `sub: v`), non-ASCII-keyed lines. Preserved VERBATIM in place (audit
+ * important: the old parser dropped these as «orphans», silently destroying
+ * valid YAML — a `--set status` pass erased a note's whole block-scalar
+ * description). An explicit op addressing a raw entry's real key replaces
+ * the construct — the operator wins; untouched raw entries round-trip
+ * byte-identically.
+ */
+export class RawBlock {
+  constructor(public lines: string[]) {}
+}
+
+export type Entry = Scalar | FmList | RawBlock;
 
 function stripPairedQuotes(v: string): string {
   if (
@@ -89,14 +104,17 @@ export function yamlSafeScalar(value: string): string {
 
 /**
  * Round-trip AST for the frontmatter YAML subset: top-level scalars,
- * block-style lists (`key:` + `  - item`), inline lists (`key: [a, b]`),
- * inline null (`key: null` / `key: ~`). Anything else is dropped — that IS
- * the structural sanitisation of incident states (a lone `- value` without
- * an open key above is silently discarded, never re-attached).
+ * block-style lists (`key:` + `- item`, ANY indent including zero), inline
+ * lists (`key: [a, b]`), inline null (`key: null` / `key: ~`). Constructs
+ * OUTSIDE the model — block scalars, nested maps, non-ASCII keys — are kept
+ * as opaque RawBlock entries and serialised verbatim in place (audit
+ * important: they used to be dropped as «orphans», destroying valid YAML on
+ * every structural pass). The ONLY thing still dropped is a true orphan: a
+ * lone `- value` with no open list key above (the sed-artifact class this
+ * sanitisation was built for) — never re-attached.
  *
  * Invariant: list items live INSIDE FmList — an orphan is impossible.
- * Empty scalars and empty lists are dropped after parsing, so the AST
- * state equals the serialised state.
+ * Empty scalars and empty lists are dropped after parsing.
  */
 export class Frontmatter {
   private entries = new Map<string, Entry>();
@@ -104,11 +122,13 @@ export class Frontmatter {
 
   static fromText(text: string): Frontmatter {
     const fm = new Frontmatter();
-    let currentListKey: string | null = null;
-    for (const rawLine of text.split("\n")) {
-      const line = rawLine.replace(/\r$/, "");
+    const lines = text.split("\n").map((l) => l.replace(/\r$/, ""));
+    let rawSeq = 0;
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
       if (!line.trim()) {
-        currentListKey = null;
+        i += 1;
         continue;
       }
 
@@ -116,38 +136,100 @@ export class Frontmatter {
       if (mKey) {
         const key = mKey[1];
         let value = mKey[2].trim();
+
+        // Block scalar (`key: |` / `key: >`, chomping/indent modifiers) —
+        // the body is YAML we do not model: keep the whole construct raw.
+        if (/^[|>][0-9+-]*$/.test(value)) {
+          const block = [line];
+          let j = i + 1;
+          while (j < lines.length && (lines[j].trim() === "" || /^\s/.test(lines[j]))) {
+            block.push(lines[j]);
+            j += 1;
+          }
+          while (block.length > 1 && block[block.length - 1].trim() === "") block.pop();
+          fm.setEntry(key, new RawBlock(block));
+          i = j;
+          continue;
+        }
+
         if (value.startsWith("[") && value.endsWith("]")) {
           const inner = value.slice(1, -1).trim();
           const items = inner
             ? inner.split(",").map((s) => s.trim()).filter(Boolean)
             : [];
           fm.setEntry(key, new FmList(items));
-          currentListKey = null;
-        } else if (value === "" || value === "null" || value === "~") {
+          i += 1;
+          continue;
+        }
+
+        if (value === "" || value === "null" || value === "~") {
+          if (value === "") {
+            // Lookahead decides the construct: indented NON-item content is
+            // a nested map (raw, verbatim); `- item` lines (any indent, zero
+            // included) are a block list; nothing → empty scalar.
+            let k = i + 1;
+            while (k < lines.length && lines[k].trim() === "") k += 1;
+            if (
+              k < lines.length &&
+              /^\s+\S/.test(lines[k]) &&
+              !BLOCK_LIST_ITEM_RE.test(lines[k])
+            ) {
+              const block = [line];
+              let j = i + 1;
+              while (j < lines.length && (lines[j].trim() === "" || /^\s/.test(lines[j]))) {
+                block.push(lines[j]);
+                j += 1;
+              }
+              while (block.length > 1 && block[block.length - 1].trim() === "") block.pop();
+              fm.setEntry(key, new RawBlock(block));
+              i = j;
+              continue;
+            }
+            const items: string[] = [];
+            let j = i + 1;
+            while (j < lines.length && lines[j].trim() !== "") {
+              const it = BLOCK_LIST_ITEM_CAPTURE_RE.exec(lines[j]);
+              if (!it) break;
+              const v = stripPairedQuotes(it[1].trim());
+              if (v) items.push(v);
+              j += 1;
+            }
+            if (items.length > 0) {
+              fm.setEntry(key, new FmList(items));
+              i = j;
+              continue;
+            }
+          }
           fm.setEntry(key, new Scalar(""));
-          currentListKey = value === "" ? key : null;
-        } else {
-          value = stripPairedQuotes(value);
-          fm.setEntry(key, new Scalar(value));
-          currentListKey = null;
+          i += 1;
+          continue;
         }
+
+        value = stripPairedQuotes(value);
+        fm.setEntry(key, new Scalar(value));
+        i += 1;
         continue;
       }
 
-      const mItem = ITEM_RE.exec(line);
-      if (mItem && currentListKey !== null) {
-        const item = stripPairedQuotes(mItem[1].trim());
-        const existing = fm.entries.get(currentListKey);
-        if (existing instanceof Scalar) {
-          fm.entries.set(currentListKey, new FmList([item]));
-        } else if (existing instanceof FmList) {
-          existing.items.push(item);
+      // Non-ASCII-keyed mapping line (`Ключ: значение` — Obsidian user
+      // fields): outside the ops model, but VALID YAML — preserve verbatim
+      // (with its indented continuation) under a synthetic, unaddressable key.
+      if (!/^\s/.test(line) && /^[^\s#-][^:]*:/.test(line)) {
+        const block = [line];
+        let j = i + 1;
+        while (j < lines.length && (lines[j].trim() === "" || /^\s/.test(lines[j]))) {
+          block.push(lines[j]);
+          j += 1;
         }
+        while (block.length > 1 && block[block.length - 1].trim() === "") block.pop();
+        fm.setEntry(`\u0000raw${rawSeq++}`, new RawBlock(block));
+        i = j;
         continue;
       }
 
-      // Orphan line — drop (root protection against broken YAML).
-      currentListKey = null;
+      // True orphan (a lone `- value` with no open list key — the sed-artifact
+      // class) — drop: the load-bearing structural sanitisation.
+      i += 1;
     }
     fm.dropEmpties();
     return fm;
@@ -197,6 +279,12 @@ export class Frontmatter {
       this.entries.set(key, promoted);
       return;
     }
+    if (existing instanceof RawBlock) {
+      // The operator explicitly targets this key — the op wins over the
+      // opaque construct (same contract as `set` replacing it).
+      this.entries.set(key, new FmList([value]));
+      return;
+    }
     if (!existing.items.includes(value)) existing.items.push(value);
   }
 
@@ -207,6 +295,7 @@ export class Frontmatter {
       if (existing.value === value) this.remove(key);
       return;
     }
+    if (existing instanceof RawBlock) return; // opaque — nothing to match
     const i = existing.items.indexOf(value);
     if (i !== -1) existing.items.splice(i, 1);
     if (existing.items.length === 0) this.remove(key);
@@ -219,6 +308,8 @@ export class Frontmatter {
       if (entry instanceof Scalar) {
         if (entry.value === "") continue;
         out.push(`${key}: ${yamlSafeScalar(entry.value)}\n`);
+      } else if (entry instanceof RawBlock) {
+        for (const l of entry.lines) out.push(`${l}\n`); // verbatim, in place
       } else {
         if (!entry.items.length) continue;
         out.push(`${key}:\n`);

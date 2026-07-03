@@ -1034,3 +1034,23 @@ describe("resolveAgentName — PEER_PERSONALITY first", () => {
     expect(resolveAgentName("  ", { PEER_PERSONALITY: " " })).toBeNull();
   });
 });
+
+describe("normalizeScalarValue — flow collections stay collections (audit important)", () => {
+  it("a balanced inline array is left untouched (Obsidian aliases class)", () => {
+    expect(normalizeScalarValue("[Сокращение, Синоним]")).toBeNull();
+    expect(normalizeScalarValue("{k: v, k2: v2}")).toBeNull();
+  });
+
+  it("a dangling opener is still quoted (the broken-scalar class the heuristic exists for)", () => {
+    expect(normalizeScalarValue("[висячая")).toBe('"[висячая"');
+  });
+
+  it("a [[wikilink]] value keeps being quoted — wikilink intent, not a nested array", () => {
+    expect(normalizeScalarValue("[[Заметка]]")).toBe('"[[Заметка]]"');
+  });
+
+  it("normalizeAllScalars end-to-end: aliases survive as an array", () => {
+    const fm = "title: X\naliases: [Сокращение, Синоним]\nstatus: актуально\n";
+    expect(normalizeAllScalars(fm)).toBe(fm);
+  });
+});

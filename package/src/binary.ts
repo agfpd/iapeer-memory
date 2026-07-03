@@ -25,7 +25,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Egress } from "./egress.js";
 import { signInstalledBinary, type SigningOutcome } from "./signing.js";
-import { guardedUnlinkSync } from "@agfpd/iapeer-memory-core";
+import { guardedUnlinkSync, guardedRenameSync } from "@agfpd/iapeer-memory-core";
 
 export function isCompiledRuntime(): boolean {
   return import.meta.url.includes("/$bunfs/");
@@ -72,7 +72,7 @@ export function installBinary(
   }
 
   fs.chmodSync(tmp, 0o755);
-  fs.renameSync(tmp, outPath); // atomic swap — safe over a running binary on macOS
+  guardedRenameSync(tmp, outPath); // atomic swap — safe over a running binary on macOS
   // Stable-identity re-sign on EVERY compile path (TCC grants survive
   // updates — contract with iapeer, see signing.ts). Soft-fail by design.
   const signing = signInstalledBinary(egress, outPath);
