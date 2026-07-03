@@ -11,8 +11,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.16] - 2026-07-03
+
+Remediation phase 9 (audit 2026-07-02): the cosmetic batch — the final
+remainder of the audit. 16 findings fixed (4 of the 23 cosmetics had
+already been closed in passing by 0.4.11–0.4.13).
+
+### Fixed
+
+- **memoryd/core**: `runDetectPass` serialized through the flushing chain
+  (no interleaved double flush); heartbeat written via tmp+rename (a reader
+  between truncate and write no longer sees an empty file); the
+  `needs_review` auto-clear pass honors the configured `indexAgent` instead
+  of the literal `"index"`; `decideUpdate` assembles files via the shared
+  `assemble()` — byte parity with the hook path, ending the smart-hash
+  flip-flop on the post-fence blank line; `vault_read` not-found responses
+  no longer leak the absolute vault path (raw error goes to stderr);
+  `memory_map` ranks cluster `top_nodes` on the full degree map
+  (`degreeTotals` in `VaultMapData`) instead of the hubs-only rebuild that
+  degraded to alphabetical order; a per-search meta cache plus a new
+  `edges(target_path)` index kill repeated meta parses and full edge scans
+  on the search hot path (transparent `IF NOT EXISTS` migration); graph.ts
+  switched to an iterative Tarjan with an explicit stack and index-pointer
+  BFS — no stack overflow / O(n²) queues on large vaults.
+- **package**: the tag gate reads the tags-dictionary from the local mirror
+  first (vault source as fallback) — an evicted iCloud placeholder no
+  longer silently disarms the gate; `sameJson` is a structural, key-order-
+  insensitive deep-equal — no more perpetual repair churn against foreign
+  JSON normalisers; codex TOML surgery recognises the quoted header form
+  (`[mcp_servers."iapeer-memory"]`) as ours, preventing duplicate-table
+  corruption of a peer's config; `writeExecutable` repairs a lost exec bit
+  instead of reporting «identical»; `renderRoleDoctrines` requires
+  `vaultPath` so the batch API can't render placeholder doctrines; the CLI
+  help and render.ts header now state which artifacts memoryd actually
+  renders continuously (index/fragment) versus init/update/verify's duty
+  (doctrine/guide).
+
 ### Changed
 
+- Docs (EN+RU) aligned with the code: the archive is flat (no genre
+  subfolders, numeric suffixes on collisions); memoryd does not render the
+  shared guide (init/update do); `status` shows no «inbox»; the weekly
+  dream timer is registered in `curated` mode only — the default `lean`
+  runs no curation ticks.
+- Hook tag-gate tests are hermetic: pinned to a sandbox
+  `IAPEER_MEMORY_CACHE_DIR` (the mirror-first read otherwise reached the
+  host's live mirror), plus a mirror-first gate test.
 - Repository documentation actualised to the v1.2-only model: the package
   README no longer calls the per-peer session surfaces "plugins", and the
   Russian integration doc gained parity for the pre-v1.2 manual-migration note.
