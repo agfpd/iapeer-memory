@@ -819,6 +819,16 @@ export function buildOutput(
  * rename means a reader only ever sees old-complete or new-complete.
  */
 export function atomicWrite(filePath: string, content: string): void {
+  // bytes-compare first (audit important): renderFleetFragments rewrote
+  // 3×N files on EVERY debounced flush even when nothing changed — mtime
+  // churn in every peer's surfaces for no reason. The render output is
+  // deterministic, so identical bytes → skip the write entirely (the same
+  // contract syncTagsProjection and renderDoctrine already follow).
+  try {
+    if (fs.readFileSync(filePath, "utf-8") === content) return;
+  } catch {
+    // absent/unreadable — write proceeds
+  }
   const dir = path.dirname(filePath) || ".";
   const tmp = path.join(dir, `.vault-index-${crypto.randomBytes(6).toString("hex")}.tmp`);
   try {

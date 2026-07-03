@@ -140,6 +140,13 @@ export function writeFragmentAtomic(
   // review note, stage 7): peer doctrine material is owner-only.
   fs.mkdirSync(fragmentsDir, { recursive: true, mode: 0o700 });
   const target = path.join(fragmentsDir, stem);
+  // bytes-compare first (audit important) — identical fragment → no write,
+  // no rename, no mtime churn in the peer's cwd.
+  try {
+    if (fs.readFileSync(target, "utf-8") === text) return target;
+  } catch {
+    // absent — write proceeds
+  }
   const tmp = path.join(
     fragmentsDir,
     `.${stem}.${crypto.randomBytes(6).toString("hex")}.tmp`,

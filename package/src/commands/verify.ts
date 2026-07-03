@@ -32,7 +32,7 @@ import { readFleetMap, writeFleetMap } from "../fleet.js";
 import { memoryPaths, type MemoryPaths } from "../paths.js";
 import { readRolesManifest } from "../roles.js";
 import { readSlot, slotProvisionBlocks, writeSlot, SLOT_PROVIDER } from "../slot.js";
-import { withProvisionLock } from "../surfaces/lock.js";
+import { withProvisionLock, pidAliveProbe } from "../surfaces/lock.js";
 import { checkFleetSurfaces, sweepProvision } from "../surfaces/sweep.js";
 import { mcpPort } from "./provision-peer.js";
 import { packageVersion } from "../version.js";
@@ -292,6 +292,7 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
       } else {
         const badPeers = fleet.filter((p) => bad.some((b) => b.cwd === p.cwd));
         const locked = withProvisionLock({
+        pidAlive: pidAliveProbe(egress),
           stateDir: paths.stateDir,
           fn: () => sweepProvision(egress, { fleet: badPeers, hooksDir: paths.hooksDir, port: mcpPort(), iapeerBin: opts.iapeerBin }),
         });
@@ -574,16 +575,24 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
         current = null;
       }
       const rendered = current === null ? null : renderedVersion(current);
-      if (current !== null && rendered === version) {
+      // A crippled doctrine can carry the CURRENT version marker: `render
+      // doctrine` used to render {{VAULT_PATH}} as a placeholder while
+      // stamping the package version — the marker-only check read it as
+      // «ok» forever (audit important). The placeholder text is the tell.
+      const hasPlaceholder =
+        current !== null && current.includes("<unknown — see IAPEER_MEMORY_VAULT_PATH");
+      if (current !== null && rendered === version && !hasPlaceholder) {
         results.push({ name, status: "ok", detail: `v${rendered}` });
         continue;
       }
       const problem =
         current === null
           ? `doctrine missing at ${target}`
-          : rendered === null
-            ? "no version marker in rendered doctrine"
-            : `v${rendered} != package v${version}`;
+          : hasPlaceholder
+            ? "doctrine carries the VAULT_PATH placeholder — rendered without a host vault fact"
+            : rendered === null
+              ? "no version marker in rendered doctrine"
+              : `v${rendered} != package v${version}`;
       if (!repair) {
         results.push({ name, status: "fail", detail: problem });
         continue;

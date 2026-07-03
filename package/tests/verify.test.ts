@@ -497,3 +497,35 @@ describe("runVerify — stale dream timer when the role is OFF (audit important,
     expect(r.status).toBe("skip");
   });
 });
+
+describe("runVerify — placeholder doctrine is NOT ok (audit important, renders batch)", () => {
+  it("current version marker + VAULT_PATH placeholder → fail; repair re-renders with the host fact", () => {
+    const peerCwd = path.join(tmp, "peer-ph");
+    const template = path.join(tmp, "tmpl.md");
+    fs.mkdirSync(path.join(peerCwd, ".iapeer"), { recursive: true });
+    fs.writeFileSync(template, "Doctrine body. Vault: {{VAULT_PATH}}\n");
+    fs.writeFileSync(
+      paths.rolesManifestPath,
+      JSON.stringify({ roles: [{ role: "index", peerCwd, template }] }),
+    );
+    // A doctrine rendered WITHOUT the vault fact but stamped with the
+    // CURRENT version — the exact state `render doctrine` used to produce.
+    fs.writeFileSync(
+      path.join(peerCwd, ".iapeer", "IAPEER.md"),
+      `Doctrine body. Vault: <unknown — see IAPEER_MEMORY_VAULT_PATH in the package config.env>\n\n<!-- iapeer-memory doctrine v1.0.0 -->\n`,
+    );
+
+    const bad = byName(runVerify(EG, { paths, version: "1.0.0" }), "doctrine[index]");
+    expect(bad.status).toBe("fail");
+    expect(bad.detail).toContain("placeholder");
+
+    const repaired = byName(
+      runVerify(EG, { paths, version: "1.0.0", repair: true }),
+      "doctrine[index]",
+    );
+    expect(repaired.status).toBe("repaired");
+    const after = fs.readFileSync(path.join(peerCwd, ".iapeer", "IAPEER.md"), "utf-8");
+    expect(after).not.toContain("<unknown");
+    expect(after).toContain(process.env.IAPEER_MEMORY_VAULT_PATH!); // the host fact landed
+  });
+});

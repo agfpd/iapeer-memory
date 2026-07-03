@@ -48,7 +48,7 @@ import { readFleetMap, writeFleetMap } from "../fleet.js";
 import { memoryPaths } from "../paths.js";
 import { readRolesManifest } from "../roles.js";
 import { readSlot, writeSlot, SLOT_PROVIDER } from "../slot.js";
-import { withProvisionLock } from "../surfaces/lock.js";
+import { withProvisionLock, pidAliveProbe } from "../surfaces/lock.js";
 import { sweepProvision } from "../surfaces/sweep.js";
 import { mcpPort } from "./provision-peer.js";
 import { guideText, guideTemplatePath, materialiseTemplates } from "../templates/index.js";
@@ -202,6 +202,7 @@ export function cmdUpdate(argv: string[], egress: Egress): number {
   } else {
     const fleet = readFleetMap(paths.fleetMapPath) ?? [];
     const locked = withProvisionLock({
+        pidAlive: pidAliveProbe(egress),
       stateDir: paths.stateDir,
       fn: () => sweepProvision(egress, { fleet, hooksDir: paths.hooksDir, port: mcpPort(), iapeerBin }),
     });

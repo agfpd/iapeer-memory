@@ -41,7 +41,7 @@ import { provisionVault, writeDefaultConfig } from "../provision.js";
 import { writeRolesManifest, type RoleEntry } from "../roles.js";
 import { readSlot, writeSlot, SLOT_PROVIDER } from "../slot.js";
 import { readFleetMap, writeFleetMap } from "../fleet.js";
-import { withProvisionLock } from "../surfaces/lock.js";
+import { withProvisionLock, pidAliveProbe } from "../surfaces/lock.js";
 import { sweepProvision } from "../surfaces/sweep.js";
 import { mcpPort } from "./provision-peer.js";
 import {
@@ -582,6 +582,7 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
     } else {
       const fleet = readFleetMap(paths.fleetMapPath) ?? [];
       const locked = withProvisionLock({
+        pidAlive: pidAliveProbe(egress),
         stateDir: paths.stateDir,
         fn: () => sweepProvision(egress, { fleet, hooksDir: paths.hooksDir, port: mcpPort(), iapeerBin: flags.iapeerBin }),
       });

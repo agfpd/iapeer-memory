@@ -147,10 +147,21 @@ function renderDoctrineCmd(argv: string[]): number {
   if (!role || !peerCwd || !template) {
     throw new UsageError("--role, --peer-cwd and --template are all required");
   }
+  // vaultPath — the same host-fact resolution update/init/verify use (audit
+  // important): without it the {{VAULT_PATH}} marker rendered as a
+  // placeholder, the role peer lost the vault root fact, and verify (marker
+  // version only) read the crippled doctrine as «ok» forever.
+  let vaultPath: string | undefined;
+  try {
+    vaultPath = configFromEnv().vaultPath;
+  } catch {
+    // unprovisioned env — the template keeps its marker, never a guess
+  }
   const outcome = renderDoctrine({
     templatePath: template,
     peerCwd,
     version: packageVersion(),
+    vaultPath,
   });
   console.log(`render doctrine [${role}]: ${outcome.action} ${outcome.target}`);
   return outcome.action === "missing-template" ? 1 : 0;

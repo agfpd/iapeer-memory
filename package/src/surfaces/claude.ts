@@ -40,6 +40,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { SKILL_BODIES, SKILL_DIR_PREFIX, SKILL_NAMES } from "../templates/skills.js";
 import { guardedWriteFileSync, guardedUnlinkSync, guardedRmSync, guardedRenameSync } from "@agfpd/iapeer-memory-core";
 
@@ -97,7 +98,9 @@ function shimContent(verb: "post-write" | "session-start"): string {
 
 export function writeFileAtomic(filePath: string, content: string, mode?: number): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const tmp = `${filePath}.tmp`;
+  // Unique tmp — concurrent writers must not share a truncatable tmp file
+  // (audit important, the fleet.json class).
+  const tmp = `${filePath}.${crypto.randomBytes(6).toString("hex")}.tmp`;
   guardedWriteFileSync(tmp, content, "utf-8");
   if (mode !== undefined) fs.chmodSync(tmp, mode);
   guardedRenameSync(tmp, filePath);

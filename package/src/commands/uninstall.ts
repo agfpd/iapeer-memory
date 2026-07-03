@@ -23,7 +23,7 @@ import { ui } from "../ui.js";
 import { removeBinary } from "../binary.js";
 import { readFleetMap } from "../fleet.js";
 import { readSlot, removeSlot, SLOT_PROVIDER } from "../slot.js";
-import { withProvisionLock } from "../surfaces/lock.js";
+import { withProvisionLock, pidAliveProbe } from "../surfaces/lock.js";
 import { sweepUnprovision } from "../surfaces/sweep.js";
 import { guardedUnlinkSync } from "@agfpd/iapeer-memory-core";
 import {
@@ -119,6 +119,7 @@ export function cmdUninstall(argv: string[], egress: Egress): number {
       );
     } else {
       const locked = withProvisionLock({
+        pidAlive: pidAliveProbe(egress),
         stateDir: paths.stateDir,
         fn: () => sweepUnprovision({ fleet }),
       });

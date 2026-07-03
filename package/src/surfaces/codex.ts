@@ -280,6 +280,9 @@ export function trustCodexHooks(
   }
   const bin = opts.iapeerBin ?? IAPEER_BIN;
   const proc = egress.spawnSync([bin, "trust-hooks", real], {
+    // Bounded: this spawn runs UNDER the provision lock — an unbounded hang
+    // used to hold the lock past the stale threshold (audit important).
+    timeoutMs: 30_000,
     explicitBin: opts.iapeerBin !== undefined,
   });
   if (proc.refused) {
@@ -416,6 +419,7 @@ export function checkCodexPeer(
       } else {
         const bin = opts.iapeerBin ?? IAPEER_BIN;
         const proc = egress.spawnSync([bin, "trust-hooks", real, "--check"], {
+          timeoutMs: 30_000, // bounded read-only probe
           explicitBin: opts.iapeerBin !== undefined,
         });
         if (proc.refused) {

@@ -33,7 +33,7 @@ import {
   type SurfaceOutcome,
 } from "../surfaces/claude.js";
 import { provisionCodexPeer, unprovisionCodexPeer } from "../surfaces/codex.js";
-import { withProvisionLock } from "../surfaces/lock.js";
+import { withProvisionLock, pidAliveProbe } from "../surfaces/lock.js";
 import { paintStatus, ui } from "../ui.js";
 
 /** The memoryd MCP port FACT of this host (config.env is already loaded into
@@ -142,6 +142,7 @@ export function cmdProvisionPeer(argv: string[], egress: Egress): number {
   }
   const paths = memoryPaths();
   const locked = withProvisionLock({
+        pidAlive: pidAliveProbe(egress),
     stateDir: paths.stateDir,
     fn: () =>
       flags.runtime === "codex"
@@ -172,6 +173,8 @@ export function cmdUnprovisionPeer(argv: string[]): number {
   // peer directory removal) — every surface simply reports `absent`
   const paths = memoryPaths();
   const locked = withProvisionLock({
+    // no egress in the unprovision entry — tokenless/dead-owner locks still
+    // self-break by age; a token'd LIVE lock is honoured (waits/refuses).
     stateDir: paths.stateDir,
     fn: () =>
       flags.runtime === "codex"

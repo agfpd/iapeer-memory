@@ -37,6 +37,7 @@ import {
   DESCRIPTION_MAX_LEN,
   type RenderContext,
   type FilteredNote,
+  atomicWrite,
 } from "../src/index-render.js";
 import { openDatabase } from "../src/db.js";
 import { indexAll } from "../src/indexer.js";
@@ -967,3 +968,21 @@ for (const locale of ["ru", "en"] as LocaleId[]) {
     });
   });
 }
+
+describe("atomicWrite — bytes-compare (audit important, renders batch)", () => {
+  it("an identical rewrite is a no-op: no rename, no mtime churn", async () => {
+    const td = fs.mkdtempSync(path.join(os.tmpdir(), "aw-bytes-"));
+    const f = path.join(td, "out.md");
+    try {
+      atomicWrite(f, "стабильные байты\n");
+      const m1 = fs.statSync(f).mtimeMs;
+      await new Promise((r) => setTimeout(r, 30));
+      atomicWrite(f, "стабильные байты\n"); // identical → skipped
+      expect(fs.statSync(f).mtimeMs).toBe(m1);
+      atomicWrite(f, "новые байты\n"); // different → written
+      expect(fs.readFileSync(f, "utf-8")).toBe("новые байты\n");
+    } finally {
+      fs.rmSync(td, { recursive: true, force: true });
+    }
+  });
+});

@@ -82,6 +82,12 @@ export async function cmdMemoryd(argv: string[], egress: Egress): Promise<number
     heartbeatPath: paths.heartbeatPath,
     hashStatePath: paths.hashStatePath,
     tagsMirrorPath: paths.tagsMirrorPath,
+    // The FULL derived-path symmetry (audit important): without this the
+    // core defaulted the projection next to the DB — under a documented
+    // IAPEER_MEMORY_DB_PATH override the repair-path `render fragment` read
+    // the package path, found nothing and silently rendered fragments
+    // WITHOUT the tags dictionary.
+    tagsProjectionPath: paths.tagsProjectionPath,
     humanName: human ?? process.env.IAPEER_MEMORY_HUMAN_NAME ?? null,
     freshEditWindowS,
     mcpPort: noMcp ? null : mcpPort,

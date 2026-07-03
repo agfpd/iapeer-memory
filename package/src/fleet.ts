@@ -20,6 +20,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { IAPEER_BIN, type Egress } from "./egress.js";
 import { guardedWriteFileSync, sandboxBlocksProdRead, guardedRenameSync } from "@agfpd/iapeer-memory-core";
 
@@ -153,7 +154,11 @@ export function writeFleetMap(
       2,
     ) + "\n";
   fs.mkdirSync(path.dirname(opts.fleetMapPath), { recursive: true });
-  const tmp = `${opts.fleetMapPath}.tmp`;
+  // UNIQUE tmp name (audit important): two concurrent writers over a shared
+  // `.tmp` interleaved O_TRUNC + rename — a torn fleet.json (memoryd reads
+  // it fail-open → fragment rendering silently OFF) or an ENOENT crash of
+  // the losing writer. Same pattern as core atomicWrite.
+  const tmp = `${opts.fleetMapPath}.${crypto.randomBytes(6).toString("hex")}.tmp`;
   guardedWriteFileSync(tmp, body, "utf-8");
   guardedRenameSync(tmp, opts.fleetMapPath); // atomic — memoryd may race a read
   return {

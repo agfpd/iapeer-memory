@@ -352,3 +352,60 @@ describe("CLI verbs (argv contract with the core, §7)", () => {
     expect(await main(["provision-peer", "--cwd", path.join(tmp, "nope"), "--runtime", "claude", "--personality", "x"])).toBe(1);
   });
 });
+
+describe("provision lock — owner token + liveness (audit important)", () => {
+  it("a token'd lock of a LIVE holder is NOT stale-broken past the age threshold", () => {
+    const stateDir = path.join(tmp, "lock-live");
+    const lockDir = path.join(stateDir, "provision.lock.d");
+    fs.mkdirSync(lockDir, { recursive: true });
+    fs.writeFileSync(path.join(lockDir, "owner"), "12345:deadbeef");
+    const old = new Date(Date.now() - STALE_MS - 60_000);
+    fs.utimesSync(lockDir, old, old); // WAY past the stale age…
+    const r = withProvisionLock({
+      stateDir,
+      timeoutMs: 300,
+      pidAlive: () => true, // …but the owner is alive — the long sweep is legit
+      fn: () => "won",
+    });
+    expect(r.acquired).toBe(false); // honoured, not torn from the live holder
+    expect(fs.existsSync(lockDir)).toBe(true);
+  });
+
+  it("a token'd lock of a DEAD holder IS broken and re-taken", () => {
+    const stateDir = path.join(tmp, "lock-dead");
+    const lockDir = path.join(stateDir, "provision.lock.d");
+    fs.mkdirSync(lockDir, { recursive: true });
+    fs.writeFileSync(path.join(lockDir, "owner"), "999999:cafe");
+    const old = new Date(Date.now() - STALE_MS - 60_000);
+    fs.utimesSync(lockDir, old, old);
+    const r = withProvisionLock({
+      stateDir,
+      timeoutMs: 2_000,
+      pidAlive: () => false, // crashed owner
+      fn: () => "won",
+    });
+    expect(r.acquired).toBe(true);
+    expect((r as { result: string }).result).toBe("won");
+    expect(fs.existsSync(lockDir)).toBe(false); // owned release cleaned up
+  });
+
+  it("release is OWNED: a process whose lock was stale-broken never tears down the next holder's lock", () => {
+    const stateDir = path.join(tmp, "lock-owned");
+    const lockDir = path.join(stateDir, "provision.lock.d");
+    const r = withProvisionLock({
+      stateDir,
+      timeoutMs: 300,
+      fn: () => {
+        // Mid-body, a peer stale-breaks OUR lock and a NEW holder takes it
+        // (simulated): swap the owner token for someone else's.
+        fs.writeFileSync(path.join(lockDir, "owner"), "424242:other");
+        return "done";
+      },
+    });
+    expect(r.acquired).toBe(true);
+    // finally saw a FOREIGN token → left the lock alone (pre-fix: rmdir'd it,
+    // letting a third writer in — the cascade).
+    expect(fs.existsSync(lockDir)).toBe(true);
+    expect(fs.readFileSync(path.join(lockDir, "owner"), "utf-8")).toBe("424242:other");
+  });
+});
