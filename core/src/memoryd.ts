@@ -540,6 +540,13 @@ export async function startMcpHttp(opts: {
 export type BatchState = {
   permanent: VaultSnapshot | null;
   silentStamps: Map<string, StampRecord> | null;
+  /** Wall-clock epoch-ms of the last CADENCE curator tick. Persisted so the
+   *  6h countdown SURVIVES restarts: the old in-memory setInterval counted a
+   *  full period from process start, and a deploy-dense day (each foundation
+   *  deploy recycles the watcher-held daemon) reset it forever — curation
+   *  starved while memoryd looked healthy. Absent key (pre-anchor state
+   *  file) reads as null → anchored at the next start. */
+  lastCuratorTickAt: number | null;
 };
 
 export function loadBatchState(filePath: string): BatchState {
@@ -572,12 +579,14 @@ export function loadBatchState(filePath: string): BatchState {
       }
       return m;
     };
+    const anchor = (raw as Record<string, unknown>).lastCuratorTickAt;
     return {
       permanent: toMap(raw.permanent),
       silentStamps: toStamps(raw.silentStamps),
+      lastCuratorTickAt: typeof anchor === "number" && Number.isFinite(anchor) ? anchor : null,
     };
   } catch {
-    return { permanent: null, silentStamps: null };
+    return { permanent: null, silentStamps: null, lastCuratorTickAt: null };
   }
 }
 
@@ -586,6 +595,7 @@ export function persistBatchState(
   state: {
     permanent: VaultSnapshot;
     silentStamps: Map<string, StampRecord>;
+    lastCuratorTickAt: number | null;
   },
 ): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -595,6 +605,7 @@ export function persistBatchState(
     JSON.stringify({
       permanent: Object.fromEntries(state.permanent),
       silentStamps: Object.fromEntries(state.silentStamps),
+      lastCuratorTickAt: state.lastCuratorTickAt,
     }),
     "utf-8",
   );
@@ -875,18 +886,28 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
    *  old state file = empty map = first-sight warm-up (design §4). */
   const silentStamps: Map<string, StampRecord> =
     persistedBatches.silentStamps ?? new Map();
+  // Curator-tick wall-clock anchor (see BatchState): persisted → the 6h
+  // countdown survives restarts. No persisted anchor (fresh install or a
+  // pre-anchor state file) → anchor at THIS start: first tick one full
+  // period from now — the pre-anchor behavior, minus the reset-on-restart.
+  let lastCuratorTickAt: number = persistedBatches.lastCuratorTickAt ?? Date.now();
 
   function persistBatches(): void {
     try {
       persistBatchState(batchStatePath, {
         permanent: permanentBaseline,
         silentStamps,
+        lastCuratorTickAt,
       });
     } catch (err) {
       logger.error(`batch-state persist failed: ${String(err)}`);
     }
   }
-  if (!persistedBatches.permanent) persistBatches(); // first run: write baseline
+  // First run OR a pre-anchor state file: persist so the freshly-minted
+  // anchor survives an immediate recycle (deploy bursts are the incident class).
+  if (!persistedBatches.permanent || persistedBatches.lastCuratorTickAt === null) {
+    persistBatches();
+  }
 
   /** iCloud-mount guard (порт защиты старых мониторов): корень vault
    *  недоступен → пропускаем проход целиком, baseline не трогаем — после
@@ -1414,7 +1435,11 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
    *  one ephemeral curation session → one report). In lean the emit is
    *  suppressed (no proactive receiver), but the baseline still advances. */
   function runCuratorTick(): void {
-    if (!vaultAvailable()) return;
+    if (!vaultAvailable()) return; // anchor NOT advanced — the retry floor re-checks soon
+    // Advance the persisted cadence anchor FIRST — the tick occasion is
+    // consumed even if the queue is empty (persistBatches below carries it
+    // atomically with the advanced baseline).
+    lastCuratorTickAt = Date.now();
     // permanentBaseline still advances — the Release 1 humanEditPass service-only
     // guard reads it as its prev-smart-hash source.
     permanentBaseline = snapshotVault(config.vaultPath, taxonomy);
@@ -1618,7 +1643,7 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
   let lastBatchJson: string | null = null;
   function persistBatchesQuiet(): void {
     try {
-      const json = JSON.stringify([[...permanentBaseline], [...silentStamps]]);
+      const json = JSON.stringify([[...permanentBaseline], [...silentStamps], lastCuratorTickAt]);
       if (json === lastBatchJson) return;
       persistBatches();
       lastBatchJson = json;
@@ -1632,16 +1657,42 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
   }, persistMs);
   persistTimer.unref?.();
 
-  // ── cadence timer (директива ~15:31): первый прогон через полный период
+  // ── cadence timer — WALL-CLOCK anchored + persisted (директива ~15:31 gave
+  // «первый прогон через полный период»; the anchor keeps that semantic
+  // WITHOUT the old reset-on-restart). The previous setInterval counted a
+  // full period from PROCESS START, in memory only: every memoryd recycle
+  // (the notifier watcher relaunches the daemon on each foundation deploy)
+  // restarted the 6h countdown, and a deploy-dense day starved curation
+  // entirely (live incident 02–03.07: ≈40h without one CURATOR_TICK while
+  // the heartbeat stayed green). Now: restart mid-period sleeps only the
+  // REMAINDER; overdue (restart churn ate the whole period) → catch-up tick
+  // after the floor delay, not another full period.
   const curatorTickMs = opts.curatorTickMs ?? config.batch.curatorMs;
-  const curatorTimer = setInterval(() => {
-    try {
-      runCuratorTick();
-    } catch (err) {
-      logger.error(`curator tick failed: ${String(err)}`);
-    }
-  }, curatorTickMs);
-  curatorTimer.unref?.();
+  // The floor paces edge cases without hot-looping: a vault-unavailable skip
+  // leaves the anchor in place (re-check soon, not in 6h), and an overdue
+  // catch-up fires after a short settle window instead of mid-startup. It
+  // scales as period/20 capped at 60s (prod 6h → 60s; sub-second test
+  // periods stay observable). The cap at one full period bounds a
+  // forward-skewed anchor (clock jump): the next tick can never land more
+  // than curatorTickMs out.
+  const curatorRetryFloorMs = Math.min(60_000, Math.max(1, Math.floor(curatorTickMs / 20)));
+  let curatorTimer: ReturnType<typeof setTimeout> | null = null;
+  function armCuratorTick(): void {
+    const delay = Math.min(
+      Math.max(lastCuratorTickAt + curatorTickMs - Date.now(), curatorRetryFloorMs),
+      curatorTickMs,
+    );
+    curatorTimer = setTimeout(() => {
+      try {
+        runCuratorTick();
+      } catch (err) {
+        logger.error(`curator tick failed: ${String(err)}`);
+      }
+      armCuratorTick();
+    }, delay);
+    curatorTimer.unref?.();
+  }
+  armCuratorTick();
 
   // ── MCP http ──
   let mcp: { port: number; close: () => Promise<void> } | null = null;
@@ -1753,7 +1804,7 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
       if (flushTimer) clearTimeout(flushTimer);
       if (retryTimer) clearTimeout(retryTimer);
       clearInterval(heartbeatTimer);
-      clearInterval(curatorTimer);
+      if (curatorTimer) clearTimeout(curatorTimer);
       clearInterval(persistTimer);
       // Shutdown flush — the handle contract always promised it, close()
       // never ran it (audit important): a SIGTERM inside the debounce window
