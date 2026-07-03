@@ -17,6 +17,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   README no longer calls the per-peer session surfaces "plugins", and the
   Russian integration doc gained parity for the pre-v1.2 manual-migration note.
 
+## [0.4.11] - 2026-07-03
+
+Remediation phase 4 (audit 2026-07-02): five important + two cosmetic
+findings in the indexing backbone. PARSER_VERSION 2→3: the first start
+re-parses the vault and the background backfill re-embeds it; serve-first
+keeps BM25/MCP live throughout.
+
+### Fixed
+
+- **O(changed) hot path**: a file change now indexes THAT file — the flush
+  used to read and sha256 the entire vault (plus provoke iCloud
+  re-downloads) on every debounce window. Deletions of changed paths are
+  targeted and move-aware; full-walk reconciliation stays on startup and
+  the poll/belt passes.
+- **Visible broken links**: a genuinely deleted note's incoming wikilinks
+  park in `unresolved_links` (snippet preserved) instead of silently
+  vanishing from the graph — the health surface sees them and the self-heal
+  pass restores the edge if the note returns.
+- **stripLinksSection (leading form)** validates the block structure line
+  by line: real content between the links block and a later `---` (or a
+  setext underline) no longer drops out of the index.
+- **Config-aware chunking fingerprint**: changing
+  `IAPEER_MEMORY_CHUNK_SIZE`/`_OVERLAP` (or the locale) re-chunks the vault
+  instead of leaving a permanent mix of slicings.
+- **gray-matter cache off**: the optionless call cached every parsed note
+  text forever in the long-lived daemon — a pure, hitless leak.
+- **Whitespace-aware chunk splitting**: `findSplitIndex` always returned
+  `chunkSize` (dead logic) — every boundary tore words and surrogate pairs;
+  overlap tails now align to token boundaries too.
+- CRLF notes: the trailing links-block divider is recognised with `\r`.
+- Legacy diary migration clears the embedding fingerprint so rebuilt chunk
+  ids are never attributed old vectors.
+
 ## [0.4.10] - 2026-07-03
 
 Remediation phase 3 (audit 2026-07-02): eight important findings across the
