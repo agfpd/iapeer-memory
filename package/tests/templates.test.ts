@@ -106,9 +106,15 @@ describe("embedded templates", () => {
       // Индексу пустая форма больше НЕ приходит (self-done вместо send'а)
       expect(/no substance|субстанции нет/.test(index)).toBe(false);
       expect(index).not.toContain("self-done");
-      // каденция курации: пачка одной доставкой (CURATOR_TICK) + source-фильтр
+      // каденция курации: пачка одной доставкой (CURATOR_TICK); очередь —
+      // ноты, ждущие курации (кураторские правки флаг не ставят), поэтому
+      // leb=куратор в тике ЛЕГИТИМЕН и пропускается (ждёт финализации
+      // Индекса). Прежний лок «отфильтрованы источником» кодировал
+      // стейл-модель до Release 3 — source-фильтра в runCuratorTick нет
+      // (набор = скан флага очереди); снят аудитом инструкций 12.07.
       expect(scriber).toContain("CURATOR_TICK");
-      expect(/filtered\s+at the source|отфильтрованы источником/.test(scriber)).toBe(true);
+      expect(/skip those|такие пропускай/.test(scriber)).toBe(true);
+      expect(/filtered\s+at the source|отфильтрованы источником/.test(scriber)).toBe(false);
       // проблемы автору — прямым пингом по IAP
       expect(/to authors|авторам/i.test(scriber)).toBe(true);
       expect(/FROZEN|ЗАМОРОЖЕН/.test(scriber)).toBe(true);

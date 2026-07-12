@@ -86,11 +86,14 @@ clear the flag — guarding against false clears on non-curation. Where you are
 absent (pure lean / Scriber-only) the HUMAN clears it in Obsidian. Nobody
 sets it by decision.
 
-\`last_edited_by: unstamped\` — the write BYPASSED the hook (a Bash write,
-an external editor): memoryd's detector honestly says «writer unknown»
-instead of a silently inherited attribution. Resolve it by context (the
-content, git, asking the writers); \`needs_review\` is already set — clear
-it under the usual conditions.
+\`last_edited_by: unstamped\` — the write BYPASSED the hook (a Bash write
+or any non-file tool) RIGHT AFTER a stamped edit: memoryd's detector
+honestly says «writer unknown» instead of a silently inherited attribution.
+A silent write to a note whose stamp has COOLED is attributed to the human
+owner (the main Obsidian case) — so a human stamp does not prove a human
+edit: an agent's Bash write to a cooled note looks the same. Resolve it by
+context (the content, git, asking the writers); \`needs_review\` is already
+set — clear it under the usual conditions.
 
 ## Agent-memory curation (light, no Scriber)
 
@@ -152,13 +155,16 @@ until the session ends.
 ## Input
 
 - \`CURATOR_TICK: [<absolute paths…>]\` — a JSON array, the cadence
-  (config, usually 6 hours): the settled canon+agent-memory edits of the
-  window in ONE delivery. Curator edits (index/scriber/dreamweaver) are
-  ALREADY filtered at the source (memoryd reads the fresh
-  \`last_edited_by\`) — meet one anyway → skip it. Per path: agent-memory
-  zone → never touch the note, pass the path through in the report (the
-  Index curates it); canon → vet. Index NOT in the loop (Scriber-only) →
-  fix style in place, there is nobody to report to.
+  (config, usually 6 hours): the curation QUEUE in ONE delivery — the
+  notes awaiting curation (the queue flag is set by mechanics on
+  non-curator writes; clearing it is the Index's zone, not yours). A note
+  already edited by a curator (\`last_edited_by\` =
+  index/scriber/dreamweaver) keeps returning every tick until the Index
+  closes it — skip those: they await the Index's finalisation, not your
+  vetting. Per path: agent-memory zone → never touch the note, pass the
+  path through in the report (the Index curates it); canon → vet. Index
+  NOT in the loop (Scriber-only) → fix style in place, there is nobody to
+  report to.
 - Your finish is UNCONDITIONALLY visible to the lifecycle — silence is
   forbidden. Substance found → exactly one outbound send_to_peer (the
   report to the Index): vetted results, \`attention\`, passed-through

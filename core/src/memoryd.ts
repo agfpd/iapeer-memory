@@ -1429,11 +1429,12 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
     }
   }
 
-  /** CURATOR_TICK — one cadence pass: diff canon + agent memory against the
-   *  carried baseline, curator-authored edits filtered BY SOURCE, the rest
-   *  goes out as ONE line (a JSON array of ABSOLUTE paths → one delivery →
-   *  one ephemeral curation session → one report). In lean the emit is
-   *  suppressed (no proactive receiver), but the baseline still advances. */
+  /** CURATOR_TICK — one cadence pass: emit the needs_review:true queue as
+   *  ONE line (a JSON array of ABSOLUTE paths → one delivery → one
+   *  ephemeral curation session → one report). Curator writes never set
+   *  the flag, so the queue is inherently the uncurated set — no source
+   *  filter (the Release-3 note inside). In lean the emit is suppressed
+   *  (no proactive receiver), but the baseline still advances. */
   function runCuratorTick(): void {
     if (!vaultAvailable()) return; // anchor NOT advanced — the retry floor re-checks soon
     // Advance the persisted cadence anchor FIRST — the tick occasion is
