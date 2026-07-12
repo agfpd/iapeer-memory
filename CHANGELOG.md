@@ -11,6 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.19] - 2026-07-12
+
+Worker-instruction audit follow-up: the two design-level recommendations,
+sanctioned by the PM (both locales).
+
+### Changed
+
+- **Scriber doctrine**: the `status` exception is removed — the Scriber
+  never touches frontmatter at all; a suspicion that `status` is stale or
+  moved against the taxonomy scale goes into the report's `attention`
+  block (the Index or the author finalises). Zones are now clean:
+  Scriber = body, Index = metadata and graph.
+- **Index doctrine**: the CURATOR_TICK input now covers the Scriber
+  report's `attention` items symmetrically with DreamWeaver's — act on
+  them yourself, re-checking the note's live state first (a mark is a
+  snapshot taken at vetting time). Promotes the Index's private
+  operational rule into the product surface.
+
 ## [0.4.18] - 2026-07-12
 
 Worker-instruction audit (index / scriber / dreamweaver doctrines against

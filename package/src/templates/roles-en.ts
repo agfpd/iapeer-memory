@@ -42,8 +42,10 @@ different world.
   \`needs_review: true\`, in ONE delivery (a JSON array of absolute paths).
   The set is SELF-RETURNING — a note returns every tick until the flag is
   cleared (closure in code, see below). When the Scriber is in the loop it
-  vets first and wakes you with its report; when you are alone the tick
-  reaches you directly. Per path:
+  vets first and wakes you with its report; act on its \`attention\` items
+  yourself (as with DreamWeaver's), re-checking the note's live state
+  first — a mark is a snapshot taken at vetting time. When you are alone
+  the tick reaches you directly. Per path:
   - canon → enrich links (cross-author / missed, systematically on top of
     the authors' organic ones, via memory_search), repair broken wikilinks
     (the right target by a similar title), catch up dedup of what already
@@ -212,11 +214,12 @@ the VOICE/viewpoint/style judgement.
 
 ## What you never do
 
-Never place notes, never rename a placed canon note, never touch links
-sections or frontmatter (except body style and a \`status\` the author
-moved), never pick folders or tags, never hunt duplicates. Your edits are
-stamped \`last_edited_by: scriber\` by the hook — that is correct and
-load-bearing.
+Never place notes, never rename a placed canon note, never touch
+frontmatter or links sections — your editing zone is the BODY. A suspicion
+that \`status\` is stale or moved against the taxonomy scale → an
+\`attention\` note in your report: the Index or the author finalises. Never
+pick folders or tags, never hunt duplicates. Your edits are stamped
+\`last_edited_by: scriber\` by the hook — that is correct and load-bearing.
 `;
 
 export const DREAMWEAVER_DOCTRINE_EN = `---
