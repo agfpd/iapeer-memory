@@ -11,6 +11,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.18] - 2026-07-12
+
+Worker-instruction audit (index / scriber / dreamweaver doctrines against
+live memoryd mechanics; sanctioned by the owner). Two factual defects fixed
+in both locales; behavioral rules unchanged.
+
+### Fixed
+
+- **Scriber doctrine**: the CURATOR_TICK input claimed curator edits are
+  «filtered at the source (memoryd reads the fresh `last_edited_by`)» —
+  a pre-Release-3 model. `runCuratorTick` has no source filter: the set is
+  the review-queue scan; curator writes simply never set the flag, and a
+  curator-edited note legitimately returns every tick until the Index
+  closes it. The doctrine now states the real queue model and tells the
+  Scriber to skip curator-stamped paths as «awaiting the Index's
+  finalisation», keeping the field name out of his surface (the standing
+  directive). The stale test lock encoding the old claim was updated.
+- **Index doctrine**: the `unstamped` route claimed any hook-bypassing
+  write (including an external editor) gets `last_edited_by: unstamped`.
+  The silent-edit detector is zoned to the fresh-stamp window only; a
+  silent write to a cooled note is attributed to the human owner (the main
+  Obsidian case — live-confirmed 12.07: an agent's Bash edit of a cooled
+  canon note landed as the human). The doctrine now states the scope and
+  warns that a human stamp does not prove a human edit.
+- **memoryd**: the `runCuratorTick` docstring carried the same stale
+  «curator-authored edits filtered BY SOURCE» claim — rewritten to the
+  queue model (the likely origin of the doctrine defect).
+
 ## [0.4.17] - 2026-07-03
 
 Two provisioning/operations defects, both owner-observed the same day.
