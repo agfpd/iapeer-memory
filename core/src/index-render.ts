@@ -80,7 +80,15 @@ export function scalarField(fm: string, key: string): string | null {
     (v.startsWith("'") && v.endsWith("'"))
   ) {
     v = v.slice(1, -1);
-  } else if (v.startsWith("«") && v.endsWith("»")) {
+  } else if (
+    v.startsWith("«") &&
+    v.endsWith("»") &&
+    // Strip ONLY a true wrapping pair: a title like «X» в гайде … «Y»
+    // starts with « and ends with » without being wrapped — stripping it
+    // mangled the rendered [[wikilink]] (live defect, 2026-07 sweep).
+    !v.slice(1, -1).includes("«") &&
+    !v.slice(1, -1).includes("»")
+  ) {
     v = v.slice(1, -1);
   }
   return v;
@@ -331,6 +339,10 @@ function* walkMdFiles(dir: string): Generator<string> {
     return;
   }
   for (const e of entries) {
+    // Dot entries are service artifacts, not notes (Obsidian parity: it
+    // never shows them). Live case: `06_/<owner>/.iapeer/MERGEMIND.md` —
+    // a config file that must never be collected as a note.
+    if (e.name.startsWith(".")) continue;
     const full = path.join(dir, e.name);
     if (e.isDirectory()) {
       yield* walkMdFiles(full);
@@ -393,7 +405,15 @@ export function collectNotes(vault: string, ctx: RenderContext): CollectResult {
         author: author ?? "",
         memoryOwner,
         coauthors: parseCoauthors(fm),
-        type: scalarField(fm, "type") ?? "",
+        // Memory zone: the PHYSICAL folder is the genre authority (the
+        // write-hook derives `type` from it) — coerce, so a note with a
+        // missing or deviant `type` (pre-hook-era frontmatter) still lands
+        // in the owner's operative section instead of silently dropping
+        // out of buildOutput's type buckets (live class: 6 notes, 2026-07
+        // sweep).
+        type: memoryOwner !== null
+          ? ctx.taxonomy.types.agentMemory
+          : (scalarField(fm, "type") ?? ""),
         status: scalarField(fm, "status") ?? "",
         tags: parseTags(fm),
         subtype: scalarField(fm, "subtype") ?? "",

@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.21] - 2026-07-13
+
+Follow-up to 0.4.20: the acceptance sweep over the live vault surfaced three
+more ways a note in `06_/<owner>/` could stay invisible in the owner's index.
+
+### Fixed
+
+- **index-render: memory-zone `type` is coerced from the physical folder.**
+  A note with a missing or deviant `type` (pre-hook-era frontmatter) fell out
+  of `buildOutput`'s type buckets and rendered nowhere despite passing the
+  owner filter (live class: 6 notes). The folder is the genre authority —
+  same principle as the write-hook's folder-derived `type`.
+- **index-render: guillemet stripping only for a true wrapping pair.**
+  `scalarField` stripped `«…»` whenever a value started with `«` and ended
+  with `»` — a title like `«X» в гайде … «Y»` got mangled and rendered as a
+  broken `[[wikilink]]` (live defect in the Index's own vault index).
+- **index-render: dot entries are never collected.** `walkMdFiles` now skips
+  hidden files and directories (Obsidian parity) — service artifacts like
+  `06_/<owner>/.iapeer/*.md` were only kept out of the index by their lack
+  of frontmatter, which the 0.4.20 missing-author relaxation would have
+  turned into a live hole.
+
 ## [0.4.20] - 2026-07-13
 
 Closes the fleet-sweep class «note in `06_/<owner>/` with `author` ≠ folder

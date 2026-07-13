@@ -60,6 +60,12 @@ describe("scalarField", () => {
   it("strips single quotes", () => expect(scalarField("title: 'X Y'\n", "title")).toBe("X Y"));
   it("strips guillemets", () =>
     expect(scalarField("description: «foo»\n", "description")).toBe("foo"));
+  it("does NOT strip guillemets that are not a wrapping pair", () =>
+    // «X» … «Y» — starts with « and ends with » without being wrapped;
+    // stripping mangled the rendered [[wikilink]] (live defect).
+    expect(scalarField("title: «Подобрать» в гайде = «разобрать», не «собрать»\n", "title")).toBe(
+      "«Подобрать» в гайде = «разобрать», не «собрать»",
+    ));
   it("absent returns null", () => expect(scalarField("title: X\n", "author")).toBeNull());
   it("multiline frontmatter", () => {
     expect(scalarField("title: X\nauthor: boris\nstatus: актуально\n", "author")).toBe("boris");
@@ -358,6 +364,29 @@ describe("integration: collect + filter + buildOutput", () => {
       "title: Голая\ntype: оперативка агентов\nsubtype: справка\nstatus: актуально\n",
     );
     expect(collectMine("boris").mine.map((n) => n.title)).toContain("Голая");
+  });
+
+  it("memory zone: type is COERCED from the physical folder (missing/deviant type still renders in the memory section)", () => {
+    // Pre-hook-era frontmatter: subtype only, no type/status/author.
+    writeNote(
+      "06_Оперативка_агентов/boris/Старая.md",
+      "subtype: грабли\ndescription: без type\n",
+    );
+    const { mine } = collectMine("boris");
+    const note = mine.find((n) => n.title === "Старая")!;
+    expect(note).toBeDefined();
+    expect(note.type).toBe("оперативка агентов");
+    // And it actually renders — buildOutput's type buckets must not drop it.
+    const [text] = buildOutput(mine, "boris", { ctx: RU });
+    expect(text).toContain("[[Старая]]");
+  });
+
+  it("dot entries are never collected (service artifacts like 06_/<owner>/.iapeer/*.md)", () => {
+    writeNote(
+      "06_Оперативка_агентов/boris/.iapeer/SERVICE.md",
+      "title: SERVICE\ntype: оперативка агентов\nstatus: актуально\n",
+    );
+    expect(collectMine("boris").mine.map((n) => n.title)).not.toContain("SERVICE");
   });
 
   it("canon zone still keys by authorship (no folder-owner concept)", () => {
