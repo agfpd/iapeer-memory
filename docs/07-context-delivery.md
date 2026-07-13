@@ -12,7 +12,7 @@ The guide is shared across the team (`~/.iapeer/fragments/iapeer-memory.md`); th
 
 ## The author's note index
 
-The index is a slice of the agent's memory: a list of its notes, grouped by section. Operative memory comes first (it's consulted most often), then knowledge, decisions, projects, ideas, lists:
+The index is a slice of the agent's memory: a list of its notes, grouped by section. Selection depends on the zone: operative memory is keyed by the PHYSICAL folder (everything under `06_…/<agent name>/`, whoever wrote the note — the folder owner, a DreamWeaver consolidation, or a colleague's signed feedback), canon by authorship (`author` or `coauthors`). Operative memory comes first (it's consulted most often), then knowledge, decisions, projects, ideas, lists:
 
 ```text
 ## Operative memory

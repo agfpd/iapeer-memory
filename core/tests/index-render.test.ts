@@ -329,6 +329,43 @@ describe("integration: collect + filter + buildOutput", () => {
     expect(mine[0]!.title).toBe("D");
   });
 
+  it("memory zone keys by PHYSICAL folder, not author: foreign-written note visible to the owner only", () => {
+    // The 2026-07 invariant: a note in 06_/<owner>/ always lands in the
+    // owner's index (whoever wrote it), and does NOT spill into the
+    // writer's own index as noise.
+    writeNote(
+      "06_Оперативка_агентов/boris/Профиль.md",
+      "title: Профиль\nauthor: dreamweaver\ntype: оперативка агентов\nsubtype: профиль_человека\nstatus: актуально\n",
+    );
+    const owner = collectMine("boris").mine.map((n) => n.title);
+    expect(owner).toContain("Профиль");
+    const writer = collectMine("dreamweaver").mine.map((n) => n.title);
+    expect(writer).not.toContain("Профиль");
+  });
+
+  it("memory zone: even a coauthor entry does not spill a foreign-folder note into another index", () => {
+    writeNote(
+      "06_Оперативка_агентов/boris/N.md",
+      "title: N\nauthor: boris\ncoauthors:\n  - linus\ntype: оперативка агентов\nsubtype: контекст\nstatus: актуально\n",
+    );
+    expect(collectMine("boris").mine.map((n) => n.title)).toContain("N");
+    expect(collectMine("linus").mine.map((n) => n.title)).not.toContain("N");
+  });
+
+  it("memory zone: a note MISSING author is still visible to the folder owner", () => {
+    writeNote(
+      "06_Оперативка_агентов/boris/Голая.md",
+      "title: Голая\ntype: оперативка агентов\nsubtype: справка\nstatus: актуально\n",
+    );
+    expect(collectMine("boris").mine.map((n) => n.title)).toContain("Голая");
+  });
+
+  it("canon zone still keys by authorship (no folder-owner concept)", () => {
+    writeNote("01_Знания/K.md", "title: K\nauthor: linus\ntype: знание\nstatus: актуально\n");
+    expect(collectMine("boris").mine.map((n) => n.title)).not.toContain("K");
+    expect(collectMine("linus").mine.map((n) => n.title)).toContain("K");
+  });
+
   it("wikilinks counted (incoming by source + outgoing unique)", () => {
     writeNote("01_Знания/X.md", "title: X\nauthor: boris\ntype: знание\nstatus: актуально\n", "See [[Y]] and [[Z]]\n");
     writeNote("01_Знания/Y.md", "title: Y\nauthor: boris\ntype: знание\nstatus: актуально\n");
@@ -478,7 +515,7 @@ describe("integration: collect + filter + buildOutput", () => {
 
 function memNote(subtype: string, idx: number, status = "актуально", updated = "2026-05-20"): FilteredNote {
   return {
-    path: "", author: "boris", coauthors: [], tags: [], description: "",
+    path: "", author: "boris", memoryOwner: "boris", coauthors: [], tags: [], description: "",
     title: `${subtype}-${pad3(idx)}`, type: "оперативка агентов", subtype,
     status, nLinks: 0, score: 0, created: "", updated, nOutgoing: 0,
   };
@@ -548,7 +585,7 @@ describe("selectMemory — per-subtype quotas + overflow", () => {
 
 function canonNote(type: string, idx: number, nLinks = 0, status = "актуально", updated = "2026-05-20"): FilteredNote {
   return {
-    path: "", author: "boris", coauthors: [], tags: [], description: "", subtype: "",
+    path: "", author: "boris", memoryOwner: null, coauthors: [], tags: [], description: "", subtype: "",
     title: `${type}-${pad3(idx)}`, type, status,
     nLinks, score: nLinks * 1.2, created: "", updated, nOutgoing: 0,
   };

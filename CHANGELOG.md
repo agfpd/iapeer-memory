@@ -11,6 +11,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.20] - 2026-07-13
+
+Closes the fleet-sweep class «note in `06_/<owner>/` with `author` ≠ folder
+owner is invisible in the owner's vault index» (6 notes in 4 folders;
+reported by the Index and the PM).
+
+### Fixed
+
+- **index-render: the memory zone is keyed by the PHYSICAL folder, not by
+  `author`.** A note in `06_/<owner>/` now always lands in the folder
+  owner's vault index — and ONLY there (it no longer spills into the
+  writer's own index as noise). `author` stays honest metadata; canon
+  sections keep authorship keying (`author`/`coauthors`) unchanged. A
+  memory-zone note with a missing `author` field is no longer silently
+  dropped from collection.
+- **write hook: a curator can no longer self-author in the memory zone.**
+  `fillMemory` used `setIfMissing` for `author`, so a DreamWeaver
+  consolidation that hand-wrote `author: dreamweaver` survived the fill and
+  stole the note from the owner's attribution (against its own doctrine:
+  «запись в папку владельца сохраняет его атрибуцию»). For curators
+  (Index/Scriber/DreamWeaver) `author` is now FORCED from the path-derived
+  folder owner — the memory-zone arm of the canon AUTHOR GUARD; the actual
+  writer stays honest in `last_edited_by`. Non-curators keep `setIfMissing`:
+  an explicitly signed write (a peer's feedback note) is real authorship.
+
+### Documentation
+
+- `07-context-delivery` (EN/RU): the index-selection contract states the
+  zone split explicitly (memory by folder, canon by authorship).
+
 ## [0.4.19] - 2026-07-12
 
 Worker-instruction audit follow-up: the two design-level recommendations,

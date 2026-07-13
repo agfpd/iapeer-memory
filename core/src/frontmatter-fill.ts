@@ -359,7 +359,21 @@ export function fillMemory(
   fmBlock = setIfMissing(fmBlock, "type", taxonomy.types.agentMemory);
   fmBlock = setIfMissing(fmBlock, "status", taxonomy.statusTokens.current);
   fmBlock = setIfMissing(fmBlock, "created", opts.today);
-  fmBlock = setIfMissing(fmBlock, "author", authorForConstants);
+  // AUTHOR GUARD, memory-zone arm (parity with the canon guard above): a
+  // curator (Index/Scriber/DreamWeaver) NEVER authors — its writes into an
+  // owner's folder keep the OWNER's attribution (DreamWeaver consolidation
+  // contract: «запись в папку владельца сохраняет его атрибуцию»). Before
+  // this was setIfMissing-only, so a consolidation that hand-wrote
+  // `author: dreamweaver` survived the fill and stole the note from the
+  // owner's attribution (2026-07 fleet sweep: 5 notes in 4 folders). Curator
+  // + vault → FORCE the path-derived owner; the writer stays honest in
+  // `last_edited_by`. Non-curators keep setIfMissing: an explicitly signed
+  // write (e.g. a peer's feedback note) is real authorship.
+  if (opts.vault && isCurator(opts.agent, opts.ctx)) {
+    fmBlock = upsert(fmBlock, "author", authorForConstants);
+  } else {
+    fmBlock = setIfMissing(fmBlock, "author", authorForConstants);
+  }
   return moveServiceFieldsToEnd(fmBlock);
 }
 

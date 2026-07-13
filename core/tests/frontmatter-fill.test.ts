@@ -274,6 +274,37 @@ for (const T of [TAXONOMY_RU, TAXONOMY_EN]) {
       expect(fm).toContain("needs_review: false");
     });
 
+    it("curator's HAND-WRITTEN self-author is overridden by the path owner (consolidation misattribution)", () => {
+      // The 2026-07 fleet-sweep class: a DreamWeaver consolidation wrote
+      // `author: dreamweaver` explicitly — setIfMissing let it stand, the
+      // note vanished from the owner's attribution. Curator + vault → the
+      // path-derived owner is FORCED; the writer stays in last_edited_by.
+      const fm = fillMemory("author: dreamweaver\n", {
+        path: `/vault/${F.agentMemory}/boris/x.md`,
+        agent: "dreamweaver",
+        vault: "/vault",
+        today: "2026-05-15",
+        nowStamp: "2026-05-15 12:30",
+        ctx: ctx(T),
+      });
+      expect(fm).toContain("author: boris");
+      expect(fm).not.toContain("author: dreamweaver");
+      expect(fm).toContain("last_edited_by: dreamweaver");
+    });
+
+    it("non-curator's explicit author survives (signed write into a foreign folder)", () => {
+      const fm = fillMemory("author: linus\n", {
+        path: `/vault/${F.agentMemory}/boris/x.md`,
+        agent: "linus",
+        vault: "/vault",
+        today: "2026-05-15",
+        nowStamp: "2026-05-15 12:30",
+        ctx: ctx(T),
+      });
+      expect(fm).toContain("author: linus");
+      expect(fm).toContain("last_edited_by: linus");
+    });
+
     it("path outside structure returns null", () => {
       const fm = fillMemory("", {
         path: `/vault/${F.knowledge}/X.md`,

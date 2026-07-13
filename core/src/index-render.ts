@@ -28,6 +28,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import type { RankingConfig, TaxonomyPreset } from "./taxonomy.js";
 import { statusGroup as taxonomyStatusGroup } from "./taxonomy.js";
+import { parseMemoryAuthor } from "./frontmatter-fill.js";
 import { guardedWriteFileSync, guardedUnlinkSync, guardedRenameSync } from "./fs-guard.js";
 
 const WIKILINK_RE = /\[\[([^\]|#]+)/g;
@@ -37,6 +38,14 @@ export type IndexNote = {
   path: string;
   title: string;
   author: string;
+  /** Owner of the `<agentMemory>/<owner>/…` subfolder the note physically
+   *  lives in; null outside the memory zone. In the memory zone THIS — not
+   *  `author` — keys index visibility: the owner's operative folder is the
+   *  owner's working memory, whoever wrote the note (a DreamWeaver
+   *  consolidation, an Index addendum, a peer's signed feedback). Keying by
+   *  author made such notes invisible to the folder owner (2026-07 fleet
+   *  sweep: 6 notes in 4 folders). */
+  memoryOwner: string | null;
   coauthors: string[];
   type: string;
   status: string;
@@ -364,8 +373,12 @@ export function collectNotes(vault: string, ctx: RenderContext): CollectResult {
       if (!m) continue;
       const fm = m[1];
 
+      // Physical folder owner (memory zone only) — an alternative visibility
+      // key: a memory-zone note stays collectable even with a missing
+      // `author` (the owner must see everything in their folder).
+      const memoryOwner = parseMemoryAuthor(filePath, vault, ctx.taxonomy);
       const author = scalarField(fm, "author");
-      if (!author) continue;
+      if (!author && !memoryOwner) continue;
 
       const title = scalarField(fm, "title") || path.basename(filePath, ".md");
 
@@ -377,7 +390,8 @@ export function collectNotes(vault: string, ctx: RenderContext): CollectResult {
       notes.set(filePath, {
         path: filePath,
         title,
-        author,
+        author: author ?? "",
+        memoryOwner,
         coauthors: parseCoauthors(fm),
         type: scalarField(fm, "type") ?? "",
         status: scalarField(fm, "status") ?? "",
@@ -402,9 +416,17 @@ export function collectNotes(vault: string, ctx: RenderContext): CollectResult {
 }
 
 /**
- * Keep notes where the agent is author or coauthor; drop STALE; compute
+ * Keep the agent's notes; drop STALE; compute
  * `nLinks = incoming(unique sources) + outgoing(unique targets)` and
  * `score = nLinks × statusBoost`.
+ *
+ * Two visibility keys by zone:
+ * - memory zone (`memoryOwner` set): the PHYSICAL folder decides — a note in
+ *   `06_/<owner>/` belongs to the owner's index and ONLY there. `author`
+ *   stays honest metadata (who wrote), never a visibility key: author-keying
+ *   both hid foreign-written notes from the folder owner AND spilled them
+ *   into the writer's own index as noise.
+ * - canon: authorship decides (author or coauthor), as before.
  */
 export function filterAgentNotes(
   notes: Map<string, IndexNote>,
@@ -414,7 +436,11 @@ export function filterAgentNotes(
 ): FilteredNote[] {
   const mine: FilteredNote[] = [];
   for (const data of notes.values()) {
-    if (data.author !== agent && !data.coauthors.includes(agent)) continue;
+    if (data.memoryOwner !== null) {
+      if (data.memoryOwner !== agent) continue;
+    } else if (data.author !== agent && !data.coauthors.includes(agent)) {
+      continue;
+    }
     if (isStale(data.status, ctx)) continue;
     const nIn = incomingCount.get(data.title) ?? 0;
     const nLinks = nIn + data.nOutgoing;
