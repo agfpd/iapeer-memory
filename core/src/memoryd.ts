@@ -56,6 +56,7 @@ import { isArchivableZone, shouldArchive, archiveTargetRel } from "./archive.js"
 import {
   snapshotVault,
   collectNeedsReview,
+  listMonitoredNotes,
   type VaultSnapshot,
 } from "./permanent-detect.js";
 import { makeLogger, type Logger } from "./log.js";
@@ -676,6 +677,19 @@ export type MemorydOptions = {
   /** Belt-pass period while fs.watch is UP (insurance against silently dead
    *  FSEvents on iCloud vaults), ms. Default 60 min. */
   watchBeltMs?: number;
+  /** Archive grace window, ms: a stale note (final status) is moved to the
+   *  archive only when its LAST edit is at least this old; an edit inside
+   *  the window restarts it. Closes the live sharp edge «финальный статус →
+   *  мгновенный архив» (инцидент 15.07): the final status is often NOT the
+   *  last edit of a thread — the agent sets it and then appends the outcome
+   *  at the OLD path; an instant move turned that append into «File does
+   *  not exist». 0 = archive immediately (test lever). Default 10 min. */
+  archiveGraceMs?: number;
+  /** Delay of the one-shot startup full sweep (pollPass), ms. Restart churn
+   *  shorter than `watchBeltMs` would starve the belt forever (the cadence
+   *  grabli class) — grace-deferred and daemon-down stale notes would never
+   *  archive; one early sweep per process closes that. Default 2 min. */
+  startupSweepDelayMs?: number;
   /** Start WITHOUT fs.watch — the degraded polling contour from tick one.
    *  Diagnostic/test lever for the watch-loss path; production never sets it. */
   disableWatch?: boolean;
@@ -1234,7 +1248,17 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
    * (deletions are ignored; the archive is outside `monitoredFolders`), and
    * `indexAll` below reconciles the path change (drops the source, indexes the
    * archived copy — still searchable with the stale boost). Returns the count.
+   *
+   * GRACE (инцидент 15.07, «финальный статус → мгновенный архив»): a stale
+   * note is moved only when it has been QUIET for `archiveGraceMs` — the
+   * final status is often not the last edit of a thread (the agent sets it,
+   * then appends the outcome at the old path; the instant move broke that
+   * append with ENOENT). A fresh note is deferred with a per-path timer that
+   * re-feeds it through `schedule()` after the remainder: the belt/poll pass
+   * diffs snapshots and would never re-surface a note that stopped changing.
    */
+  const archiveGraceMs = opts.archiveGraceMs ?? 10 * 60_000;
+  const archiveGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   function archiveStaleNotes(candidatesAbs: Set<string>): number {
     let moved = 0;
     for (const abs of candidatesAbs) {
@@ -1247,6 +1271,35 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
         continue; // deleted mid-debounce
       }
       if (!shouldArchive(rel, content, taxonomy)) continue;
+      if (archiveGraceMs > 0) {
+        let mtimeMs: number;
+        try {
+          mtimeMs = fs.statSync(abs).mtimeMs;
+        } catch {
+          continue; // deleted mid-pass
+        }
+        const age = Date.now() - mtimeMs;
+        if (age < archiveGraceMs) {
+          // Still inside the grace window — defer and self-re-visit. The
+          // replace-on-rearm keeps ONE timer per path however many passes
+          // see it; the timer path re-enters flush via schedule(), where a
+          // meanwhile-edited note simply defers again (window restarted).
+          const prev = archiveGraceTimers.get(abs);
+          if (prev) clearTimeout(prev);
+          const t = setTimeout(() => {
+            archiveGraceTimers.delete(abs);
+            schedule(abs);
+          }, archiveGraceMs - age + debounceMs);
+          t.unref?.();
+          archiveGraceTimers.set(abs, t);
+          continue;
+        }
+        const stale = archiveGraceTimers.get(abs);
+        if (stale) {
+          clearTimeout(stale);
+          archiveGraceTimers.delete(abs);
+        }
+      }
       const targetRel = archiveTargetRel(path.basename(abs), taxonomy, (r) =>
         fs.existsSync(path.join(config.vaultPath, r)),
       );
@@ -1398,7 +1451,20 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
 
       humanEditPass(changed, prevSmart);
       curatorClearPass(changed, prevSmart); // needs_review closure: Index curation auto-clears the flag
-      archiveStaleNotes(changed); // lean §2.2a — stale → archive before reindex
+      // lean §2.2a — stale → archive before reindex. The FULL pass sweeps the
+      // whole monitored zone, not the changed diff: grace-deferred timers die
+      // with the process, and a status flipped while memoryd was down never
+      // entered `pending` — the belt/startup sweep is the restart-safe
+      // backstop that archives what the event path lost.
+      archiveStaleNotes(
+        full
+          ? new Set(
+              listMonitoredNotes(config.vaultPath, taxonomy).map((rel) =>
+                path.join(config.vaultPath, rel),
+              ),
+            )
+          : changed,
+      );
       syncTagsMirror();
       // embed:false while the background backfill drains the global queue
       // (audit important: indexAll's inline embed pass takes the WHOLE
@@ -1574,6 +1640,16 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
       degradeWatch(String(err));
     }
   }
+
+  // One-shot startup sweep (same pipeline as the belt): the first belt pass
+  // is a full `watchBeltMs` away, and restart churn shorter than that (deploy
+  // days relaunch memoryd per foundation update — the cadence-starvation
+  // class) would starve the full pass FOREVER. One early full pass per
+  // process picks up what the previous life deferred (archive grace timers)
+  // or never saw (status flipped while the daemon was down).
+  const startupSweepDelayMs = opts.startupSweepDelayMs ?? 2 * 60_000;
+  const startupSweepTimer = setTimeout(pollPass, startupSweepDelayMs);
+  startupSweepTimer.unref?.();
 
   // ── heartbeat ──
   function touchHeartbeat(): void {
@@ -1804,6 +1880,9 @@ export async function startMemoryd(opts: MemorydOptions): Promise<MemorydHandle>
       await backfillTask; // batches are atomic — await ensures no torn write
       if (flushTimer) clearTimeout(flushTimer);
       if (retryTimer) clearTimeout(retryTimer);
+      clearTimeout(startupSweepTimer);
+      for (const t of archiveGraceTimers.values()) clearTimeout(t);
+      archiveGraceTimers.clear();
       clearInterval(heartbeatTimer);
       if (curatorTimer) clearTimeout(curatorTimer);
       clearInterval(persistTimer);

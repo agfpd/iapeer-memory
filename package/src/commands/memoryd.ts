@@ -13,7 +13,10 @@
  *   (config default, ADR-012); `--no-mcp` disables the endpoint;
  * - human-edit detection: `--human` > IAPEER_MEMORY_HUMAN_NAME; absent →
  *   detection off (⚖7 — the human role is optional);
- * - fresh-edit window: IAPEER_MEMORY_FRESH_EDIT_WINDOW_S (default in core).
+ * - fresh-edit window: IAPEER_MEMORY_FRESH_EDIT_WINDOW_S (default in core);
+ * - archive grace: IAPEER_MEMORY_ARCHIVE_GRACE_MS (default in core, 10 min) —
+ *   how long a final-status note must stay quiet before memoryd moves it to
+ *   the archive (final status → append the outcome → THEN it archives).
  */
 
 import fs from "node:fs";
@@ -74,6 +77,11 @@ export async function cmdMemoryd(argv: string[], egress: Egress): Promise<number
     freshEditWindowRaw && Number.isFinite(Number(freshEditWindowRaw))
       ? Number(freshEditWindowRaw)
       : undefined;
+  const archiveGraceRaw = process.env.IAPEER_MEMORY_ARCHIVE_GRACE_MS;
+  const archiveGraceMs =
+    archiveGraceRaw && Number.isFinite(Number(archiveGraceRaw)) && Number(archiveGraceRaw) >= 0
+      ? Number(archiveGraceRaw)
+      : undefined;
 
   const handle = await startMemoryd({
     config,
@@ -90,6 +98,7 @@ export async function cmdMemoryd(argv: string[], egress: Egress): Promise<number
     tagsProjectionPath: paths.tagsProjectionPath,
     humanName: human ?? process.env.IAPEER_MEMORY_HUMAN_NAME ?? null,
     freshEditWindowS,
+    archiveGraceMs,
     mcpPort: noMcp ? null : mcpPort,
     // Single-writer lock liveness (audit important: no single-instance
     // guard): the egress `ps` probe both checks the recorded pid is alive

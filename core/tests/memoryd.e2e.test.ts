@@ -93,6 +93,10 @@ beforeAll(async () => {
     emit: (line) => events.push(line),
     debounceMs: 120,
     humanName: "artur",
+    // Instant archiving for this suite — the grace window has its own
+    // dedicated suite (archive-grace.test.ts); here stale → moved on the
+    // next pass keeps the lean §2.2a case deterministic.
+    archiveGraceMs: 0,
     logger: { info: () => {}, warn: () => {}, error: () => {} },
   });
 });

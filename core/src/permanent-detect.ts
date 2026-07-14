@@ -63,6 +63,24 @@ export function snapshotVault(vault: string, taxonomy: TaxonomyPreset): VaultSna
   return snapshot;
 }
 
+/**
+ * Rel paths of EVERY monitored .md note (archive/system folders excluded by
+ * construction — they are not in `monitoredFolders`). Feeds the memoryd
+ * full-pass archive sweep: grace-deferred archive timers die with the
+ * process, and a status flipped while memoryd was down never enters the
+ * fs.watch pending set — the periodic full pass needs the whole zone, not
+ * the changed diff. Unreadable dirs are skipped silently.
+ */
+export function listMonitoredNotes(vault: string, taxonomy: TaxonomyPreset): string[] {
+  const out: string[] = [];
+  for (const folder of monitoredFolders(taxonomy)) {
+    for (const filePath of walkMdFiles(path.join(vault, folder))) {
+      out.push(path.relative(vault, filePath));
+    }
+  }
+  return out;
+}
+
 const FM_BLOCK_RE = /^---[^\S\n]*\n([\s\S]*?)\n---/;
 
 /**
