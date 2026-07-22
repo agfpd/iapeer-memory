@@ -113,8 +113,9 @@ describe("init (local half, sandboxed)", () => {
       "utf-8",
     );
     expect(guide).toContain("01_Знания");
-    // write-path carries the HOST FACT, never a placeholder
-    expect(guide).toContain(`${vault}/01_Знания/`);
+    // write-path carries the HOST FACT, never a placeholder (the folder
+    // segment after it is the guide's wording — не лочим: гайд перепишется)
+    expect(guide).toContain(`${vault}/`);
     expect(guide).not.toContain("{{VAULT_PATH}}");
     expect(guide).not.toContain("<vault>");
   });
