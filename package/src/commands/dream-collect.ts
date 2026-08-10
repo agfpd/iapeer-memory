@@ -115,9 +115,10 @@ export function descriptionValue(content: string): string {
   return v;
 }
 
-/** Path-like tokens anchored to common absolute roots (host-portable set) or
- *  a leading `~`. Inclusive by design — a false positive is a FLAG, the
- *  subagent judges it (tolerant). */
+/** Path-like tokens anchored to common absolute roots or a leading `~`.
+ *  Recognition is intentionally broader than checking: `detectBrokenRefs`
+ *  filters out tokens whose host cannot be the collector before calling
+ *  `existsSync`. */
 const PATH_TOKEN_RE =
   /(~|\/(?:Users|home|root|private|tmp|var|opt|usr|etc|Volumes|Applications|mnt|srv))\/[A-Za-z0-9._\-/]+/g;
 /** Env references scoped to the PROJECT namespaces — the ones notes document
@@ -129,10 +130,51 @@ export type RefIo = {
   existsSync: (p: string) => boolean;
   env: Record<string, string | undefined>;
   home: string;
+  /** Collector host. Optional for backwards-compatible direct callers; the
+   *  live CLI always supplies it. */
+  platform?: NodeJS.Platform;
 };
 
-/** Broken path/env references in a note body. Paths: existence-checked
- *  (`~` expanded); envs: undefined-in-env. Returns the offending tokens. */
+/** Absolute roots that can denote the collector host. Shared POSIX roots are
+ *  included where they are native; `/etc` is deliberately excluded on macOS:
+ *  operational notes commonly mean a remote Linux `/etc` (for example
+ *  systemd), and the token itself carries no host identity. */
+const LOCAL_ROOTS: Partial<Record<NodeJS.Platform, ReadonlySet<string>>> = {
+  darwin: new Set([
+    "Users",
+    "private",
+    "tmp",
+    "var",
+    "opt",
+    "usr",
+    "Volumes",
+    "Applications",
+  ]),
+  linux: new Set(["home", "root", "tmp", "var", "opt", "usr", "etc", "mnt", "srv"]),
+};
+
+/** Whether existence on the collector host is meaningful for this token.
+ *
+ * `~` is never safe to expand here: it belongs to the shell host described by
+ * the note, which may be HiveOS/WSL/another server rather than the machine
+ * running dream-collect. Absolute paths below the collector's actual home are
+ * unambiguously local; other absolute paths must use a root native to the
+ * collector platform. */
+function isCollectorPath(tok: string, io: RefIo): boolean {
+  if (tok.startsWith("~")) return false;
+
+  const home = io.home.replace(/\/+$/, "");
+  if (home && (tok === home || tok.startsWith(`${home}/`))) return true;
+
+  const root = /^\/([^/]+)/.exec(tok)?.[1];
+  if (!root) return false;
+  return LOCAL_ROOTS[io.platform ?? process.platform]?.has(root) ?? false;
+}
+
+/** Broken path/env references in a note body. Only paths attributable to the
+ *  collector host are existence-checked; remote/host-ambiguous paths are
+ *  ignored rather than compared with the wrong filesystem. Envs are flagged
+ *  when undefined in the collector env. Returns the offending tokens. */
 export function detectBrokenRefs(
   body: string,
   io: RefIo,
@@ -141,8 +183,8 @@ export function detectBrokenRefs(
   for (const m of body.matchAll(PATH_TOKEN_RE)) {
     const tok = m[0].replace(/[.,;:)`'"]+$/, "");
     if (tok === "~" || tok.length < 4) continue;
-    const abs = tok.startsWith("~") ? path.join(io.home, tok.slice(1)) : tok;
-    if (!io.existsSync(abs)) paths.add(tok);
+    if (!isCollectorPath(tok, io)) continue;
+    if (!io.existsSync(tok)) paths.add(tok);
   }
   const envs = new Set<string>();
   for (const m of body.matchAll(ENV_TOKEN_RE)) {
@@ -632,6 +674,7 @@ export function cmdDreamCollect(argv: string[], egress: Egress): number {
       existsSync: fs.existsSync,
       env: process.env,
       home: os.homedir(),
+      platform: process.platform,
     },
   });
 

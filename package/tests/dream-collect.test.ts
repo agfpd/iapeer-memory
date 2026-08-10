@@ -48,6 +48,7 @@ const baseIo = (over: Partial<CollectIo> = {}): CollectIo => ({
   existsSync: fs.existsSync,
   env: {},
   home: tmp,
+  platform: "darwin",
   ...over,
 });
 
@@ -69,19 +70,80 @@ describe("detectBrokenRefs", () => {
     const real = path.join(tmp, "exists");
     fs.writeFileSync(real, "x");
     const body = `see \`${real}\` and ${path.join(tmp, "gone", "missing.ts")}`;
-    const r = detectBrokenRefs(body, { existsSync: fs.existsSync, env: {}, home: tmp });
-    expect(r.paths).toEqual([path.join(tmp, "gone", "missing.ts")]);
-  });
-
-  it("expands ~ against home before checking", () => {
-    fs.mkdirSync(path.join(tmp, "sub"), { recursive: true });
-    fs.writeFileSync(path.join(tmp, "sub", "here.md"), "x");
-    const r = detectBrokenRefs("path ~/sub/here.md and ~/sub/gone.md", {
+    const r = detectBrokenRefs(body, {
       existsSync: fs.existsSync,
       env: {},
       home: tmp,
+      platform: "darwin",
     });
-    expect(r.paths).toEqual(["~/sub/gone.md"]);
+    expect(r.paths).toEqual([path.join(tmp, "gone", "missing.ts")]);
+  });
+
+  it("does not resolve host-ambiguous ~ against the collector home", () => {
+    fs.mkdirSync(path.join(tmp, "sub"), { recursive: true });
+    fs.writeFileSync(path.join(tmp, "sub", "here.md"), "x");
+    const checked: string[] = [];
+    const r = detectBrokenRefs("path ~/sub/here.md and ~/sub/gone.md", {
+      existsSync: (fp) => {
+        checked.push(fp);
+        return fs.existsSync(fp);
+      },
+      env: {},
+      home: tmp,
+      platform: "darwin",
+    });
+    expect(r.paths).toEqual([]);
+    expect(checked).toEqual([]);
+  });
+
+  it("on macOS skips HiveOS/WSL roots and ambiguous /etc without touching the filesystem", () => {
+    const checked: string[] = [];
+    const body = [
+      "HiveOS /home/user/srbminer/SRBMiner-MULTI",
+      "root shell /root/recover.sh",
+      "WSL /mnt/c/Users/Artur/start_hero_fg.sh",
+      "service /etc/systemd/system/srb-miner.service",
+      "server data /srv/miner/state.json",
+      "remote home ~/srbminer/srb_hero.log",
+    ].join("\n");
+    const r = detectBrokenRefs(body, {
+      existsSync: (fp) => {
+        checked.push(fp);
+        return false;
+      },
+      env: {},
+      home: "/Users/macmini",
+      platform: "darwin",
+    });
+    expect(r.paths).toEqual([]);
+    expect(checked).toEqual([]);
+  });
+
+  it("still checks absolute paths attributable to the macOS collector", () => {
+    const local = "/Users/macmini/Peers/linus/missing.py";
+    const r = detectBrokenRefs(`local ${local}`, {
+      existsSync: () => false,
+      env: {},
+      home: "/Users/macmini",
+      platform: "darwin",
+    });
+    expect(r.paths).toEqual([local]);
+  });
+
+  it("uses the collector platform rather than hard-coding macOS roots", () => {
+    const checked: string[] = [];
+    const linuxPath = "/home/agent/missing.md";
+    const r = detectBrokenRefs(`${linuxPath} /Users/macmini/remote.md`, {
+      existsSync: (fp) => {
+        checked.push(fp);
+        return false;
+      },
+      env: {},
+      home: "/home/agent",
+      platform: "linux",
+    });
+    expect(r.paths).toEqual([linuxPath]);
+    expect(checked).toEqual([linuxPath]);
   });
 
   it("flags project-namespace env vars not set; ignores bare example vars", () => {
@@ -89,6 +151,7 @@ describe("detectBrokenRefs", () => {
       existsSync: () => true,
       env: { IAPEER_SET: "1" },
       home: tmp,
+      platform: "darwin",
     });
     expect(new Set(r.envs)).toEqual(new Set(["IAPEER_GONE", "MERGEMIND_OLD"]));
   });
@@ -98,6 +161,7 @@ describe("detectBrokenRefs", () => {
       existsSync: () => true,
       env: { IAPEER_MEMORY_VAULT_PATH: "/v" },
       home: tmp,
+      platform: "darwin",
     });
     expect(r.envs).toEqual([]);
   });
@@ -118,6 +182,25 @@ describe("noteFlags", () => {
     const body = `ref ${path.join(tmp, "missing.ts")}`;
     expect(noteFlags(note(long, body), baseIo()).sort()).toEqual(["broken-ref", "long-desc"]);
     expect(noteFlags(note("ok", "clean body"), baseIo())).toEqual([]);
+  });
+  it("HiveOS/WSL runbook paths do not create a broken-ref on a macOS collector", () => {
+    const body = [
+      "HiveOS unit /etc/systemd/system/srb-miner.service",
+      "binary /home/user/srbminer/SRBMiner-Multi-3-5-0/SRBMiner-MULTI",
+      "WSL script /mnt/c/Users/Artur/start_hero_fg.sh",
+      "remote log ~/srbminer/srb_hero.log",
+      "local monitor /Users/macmini/Peers/linus/prl_monitor.py",
+    ].join("\n");
+    expect(
+      noteFlags(
+        note("short", body),
+        baseIo({
+          home: "/Users/macmini",
+          platform: "darwin",
+          existsSync: (fp) => fp === "/Users/macmini/Peers/linus/prl_monitor.py",
+        }),
+      ),
+    ).toEqual([]);
   });
 });
 
