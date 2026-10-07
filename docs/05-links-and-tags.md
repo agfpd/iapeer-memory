@@ -8,24 +8,22 @@ Notes are connected two ways: by links to one another (the graph) and by tags (s
 
 Notes reference one another with wikilinks `[[Note name]]`. Those links form a graph that memory is navigated along ([06 — Search and write](06-search-and-write.md): `memory_related`, `memory_map`).
 
-A canon note has a service links block — a `## Links` section right after the frontmatter, before the body:
+Put related notes that are not referenced inline in a `## Links` block at the end of the canon note, after the body:
 
 ```markdown
 ---
 (frontmatter)
 ---
 
+The note body…
+
 ## Links
 
 - [[Related note]] — how it's related
 - [[Another note]] — a different reason
-
----
-
-The note body…
 ```
 
-Each line is `- [[Name]] — reason` (the reason is short, no trailing period); after the list a horizontal rule `---` separates the service block from the body. Links come in two kinds, and both go into the graph equally: **inline** — right in the body, when the note is part of what you're saying ("as in `[[X]]`"); and the **`## Links` block** — a separate link to an adjacent note that isn't in the text but is close in meaning. The author sets both while writing. The curator then enriches the section with links the author missed — finding them by searching the store.
+Each line is `- [[Name]] — reason` (the reason is required, short, no trailing period). The heading marks the start of the trailing block, so no horizontal rule is needed. Links come in two kinds, and both go into the graph equally: **inline** — right in the body, when the note is part of what you're saying ("as in `[[X]]`"); and the **`## Links` block** — a separate link to an adjacent note that isn't in the text but is close in meaning. The author sets both while writing. The curator then enriches the section with links the author missed — finding them by searching the store.
 
 When a decision is superseded by another, mutual links are set: on the old one — "superseded by this", on the new one — "supersedes this". Both links go into the graph, and the history of the choice is navigable both ways.
 
