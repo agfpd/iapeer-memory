@@ -20,6 +20,7 @@ import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { guardedRmSync, guardedWriteFileSync } from "@agfpd/iapeer-memory-core";
 
 const PKG_DIR = path.dirname(import.meta.dir); // package/
 const ROOT = path.dirname(PKG_DIR);
@@ -67,7 +68,7 @@ export function main(): void {
   run("git", ["tag", "-a", tag, "-m", v]);
 
   const out = path.join(ROOT, "dist", "release", v);
-  fs.rmSync(out, { recursive: true, force: true });
+  guardedRmSync(out, { recursive: true, force: true });
   fs.mkdirSync(out, { recursive: true });
   run("npm", ["pack", "--pack-destination", out], path.join(ROOT, "core"));
   run("npm", ["pack", "--pack-destination", out], PKG_DIR);
@@ -81,7 +82,7 @@ export function main(): void {
 
   const coreSha = sha256(coreTgz);
   const facadeSha = sha256(facadeTgz);
-  fs.writeFileSync(
+  guardedWriteFileSync(
     path.join(out, "SHA256SUMS"),
     `${coreSha}  ${path.basename(coreTgz)}\n${facadeSha}  ${path.basename(facadeTgz)}\n`,
   );
