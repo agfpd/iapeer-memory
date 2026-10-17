@@ -7,12 +7,20 @@ The memory slot invokes `provision-peer` / `unprovision-peer` with `--cwd`,
 for **both** verbs: cwd is not an identity and may be shared by several peers.
 The slot's unprovision argv includes `{personality}` as of this contract.
 
-The provider owns these two files, under `${IAPEER_ROOT:-~/.iapeer}`:
+The provider owns these two files in the core's runtime-private directory:
 
 ```
-peers/<personality>/opencode/iapeer-memory.json
-peers/<personality>/opencode/iapeer-memory-plugin.mjs
+<privateDir>/iapeer-memory.json
+<privateDir>/iapeer-memory-plugin.mjs
 ```
+
+The core supplies `<privateDir>` to slot commands as env `IAPEER_PRIVATE_DIR`
+(set only for runtimes that have one — the shared slot declaration cannot use
+the `{privateDir}` placeholder, which the core rejects for claude/codex). Its
+layout is `${IAPEER_ROOT:-~/.iapeer}/state/opencode/<personality>/` — outside
+the peer's default cwd `<root>/peers/<p>` — and the provider falls back to
+that layout only on paths the core does not drive (sweep, verify). The core
+removes the whole directory after `unprovision-peer` on peer removal.
 
 The JSON contains `mcp.iapeer-memory` (remote HTTP, literal host port,
 `oauth: false`, `X-IAPeer-Identity: {env:PEER_IDENTITY}`) and one file-URL
@@ -76,7 +84,7 @@ configuration; managed settings can override it. Synthetic/cloud trials need
 an OS-enforced synthetic-only file/network boundary plus an effective-config
 check. Fresh HOME and inline config alone are not an isolation proof.
 Weekly transcript collection (`dream-collect`) reads the core's
-per-personality journal `<IAPEER_ROOT>/peers/<p>/opencode/events.jsonl`
+per-personality journal `<IAPEER_ROOT>/state/opencode/<p>/events.jsonl`
 (iapeer `docs/20-opencode.md`: the core is its single producer; the native
 OpenCode SQLite is never read). The journal is never rotated, so the task
 carries `fromTimeMs` (window start) and the DreamWeaver judge reads only

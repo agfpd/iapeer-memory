@@ -316,9 +316,9 @@ describe("resolveTranscripts — per-runtime + cap", () => {
 });
 
 describe("resolveTranscripts — opencode journal", () => {
-  it("in-window journal under IAPEER_ROOT/peers/<p>/opencode is resolved with fromTimeMs", () => {
+  it("in-window journal under IAPEER_ROOT/state/opencode/<p> is resolved with fromTimeMs", () => {
     const root = path.join(tmp, "iaroot");
-    const fp = path.join(root, "peers", "p", "opencode", "events.jsonl");
+    const fp = path.join(root, "state", "opencode", "p", "events.jsonl");
     writeAt(fp, '{"schema":1,"seq":1}\n', inWindowSec);
     const cutoffMs = NOW - 7 * DAY;
     const got = resolveTranscripts(
@@ -330,7 +330,7 @@ describe("resolveTranscripts — opencode journal", () => {
 
   it("stale or absent journal yields an empty opencode entry (runtime still listed)", () => {
     const root = path.join(tmp, "iaroot");
-    writeAt(path.join(root, "peers", "old", "opencode", "events.jsonl"), "{}\n", outWindowSec);
+    writeAt(path.join(root, "state", "opencode", "old", "events.jsonl"), "{}\n", outWindowSec);
     for (const personality of ["old", "missing"]) {
       const got = resolveTranscripts(
         { personality, cwd: "/nope", runtimes: ["opencode"] },
@@ -343,7 +343,7 @@ describe("resolveTranscripts — opencode journal", () => {
 
   it("journal is scoped by personality, not cwd — a shared cwd does not leak", () => {
     const root = path.join(tmp, "iaroot");
-    writeAt(path.join(root, "peers", "a", "opencode", "events.jsonl"), "{}\n", inWindowSec);
+    writeAt(path.join(root, "state", "opencode", "a", "events.jsonl"), "{}\n", inWindowSec);
     const got = resolveTranscripts(
       { personality: "b", cwd: "/shared", runtimes: ["opencode"] },
       { home: tmp, cutoffMs: NOW - 7 * DAY, codexIndex: new Map(), cap: 0, iapeerRoot: root },

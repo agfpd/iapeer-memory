@@ -60,6 +60,15 @@ type Flags = {
   iapeerBin?: string;
 };
 
+/** The core hands a runtime-private directory to slot commands via env
+ *  (only for runtimes that have one — opencode). Must be absolute. */
+function corePrivateDir(): string | undefined {
+  const d = process.env.IAPEER_PRIVATE_DIR;
+  if (!d) return undefined;
+  if (!d.startsWith("/")) throw new Error(`IAPEER_PRIVATE_DIR must be absolute (got "${d}")`);
+  return d;
+}
+
 function parseFlags(
   verb: "provision-peer" | "unprovision-peer",
   argv: string[],
@@ -150,7 +159,7 @@ export function cmdProvisionPeer(argv: string[], egress: Egress): number {
     stateDir: paths.stateDir,
     fn: () =>
       flags.runtime === "opencode"
-        ? provisionOpenCodePeer({ personality: flags.personality, port: mcpPort() })
+        ? provisionOpenCodePeer({ personality: flags.personality, port: mcpPort(), privateDir: corePrivateDir() })
         : flags.runtime === "codex"
         ? provisionCodexPeer(egress, {
             cwd: flags.cwd,
@@ -184,7 +193,7 @@ export function cmdUnprovisionPeer(argv: string[]): number {
     stateDir: paths.stateDir,
     fn: () =>
       flags.runtime === "opencode"
-        ? unprovisionOpenCodePeer({ personality: flags.personality })
+        ? unprovisionOpenCodePeer({ personality: flags.personality, privateDir: corePrivateDir() })
         : flags.runtime === "codex"
         ? unprovisionCodexPeer({ cwd: flags.cwd })
         : unprovisionClaudePeer({ cwd: flags.cwd }),

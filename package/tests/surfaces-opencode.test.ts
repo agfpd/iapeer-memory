@@ -58,6 +58,32 @@ describe("runtime-private OpenCode surfaces", () => {
     expect(fs.readFileSync(files.plugin, "utf-8")).toBe("export default () => ({})");
   });
 
+  it("default layout is <root>/state/opencode/<p> — outside the peer's default cwd <root>/peers/<p>", () => {
+    expect(path.dirname(openCodePaths(opts).config)).toBe(path.join(tmp, "state", "opencode", "same-peer"));
+    expect(openCodePaths({ ...opts, privateDir: "/core/given" }).plugin).toBe("/core/given/iapeer-memory-plugin.mjs");
+  });
+
+  it("slot verbs honour the core-supplied IAPEER_PRIVATE_DIR (provision + unprovision)", () => {
+    const priv = path.join(tmp, "core-private");
+    const prev = { d: process.env.IAPEER_PRIVATE_DIR, r: process.env.IAPEER_ROOT };
+    process.env.IAPEER_PRIVATE_DIR = priv;
+    process.env.IAPEER_ROOT = tmp;
+    try {
+      const args = ["--cwd", tmp, "--runtime", "opencode", "--personality", "same-peer"];
+      expect(cmdProvisionPeer(args, liveEgress())).toBe(0);
+      expect(fs.existsSync(path.join(priv, "iapeer-memory.json"))).toBe(true);
+      expect(fs.existsSync(path.join(priv, "iapeer-memory-plugin.mjs"))).toBe(true);
+      expect(fs.existsSync(path.join(tmp, "state", "opencode", "same-peer"))).toBe(false);
+      expect(cmdUnprovisionPeer(args)).toBe(0);
+      expect(fs.existsSync(path.join(priv, "iapeer-memory.json"))).toBe(false);
+      process.env.IAPEER_PRIVATE_DIR = "relative/dir";
+      expect(() => cmdProvisionPeer(args, liveEgress())).toThrow();
+    } finally {
+      if (prev.d === undefined) delete process.env.IAPEER_PRIVATE_DIR; else process.env.IAPEER_PRIVATE_DIR = prev.d;
+      if (prev.r === undefined) delete process.env.IAPEER_ROOT; else process.env.IAPEER_ROOT = prev.r;
+    }
+  });
+
   it("rejects traversal and needs personality on BOTH lifecycle verbs", () => {
     expect(() => openCodePaths({ ...opts, personality: "../escape" })).toThrow();
     const args = ["--cwd", tmp, "--runtime", "opencode"];

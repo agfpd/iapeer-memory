@@ -504,7 +504,7 @@ describe("install-binary command", () => {
       env: scrubbedEnv({ IAPEER_MEMORY_BINARY_PATH: out }),
     });
     expect(provision.exitCode).toBe(0);
-    const plugin = path.join(tmp, "iapeer-root", "peers", "compiled-test", "opencode", "iapeer-memory-plugin.mjs");
+    const plugin = path.join(tmp, "iapeer-root", "state", "opencode", "compiled-test", "iapeer-memory-plugin.mjs");
     expect(fs.readFileSync(plugin, "utf-8")).toContain("export default");
   }, 30_000);
 });

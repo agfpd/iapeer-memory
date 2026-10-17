@@ -12,7 +12,7 @@
  *     (claude per-peer dir; codex host-wide pool filtered by the payload's
  *     `session_meta.payload.cwd` == realpath(cwd) — host fact, verified
  *     against a live rollout; opencode — the core's per-personality journal
- *     `<IAPEER_ROOT>/peers/<p>/opencode/events.jsonl` with a `fromTimeMs`
+ *     `<IAPEER_ROOT>/state/opencode/<p>/events.jsonl` with a `fromTimeMs`
  *     window start, never the native SQLite), and deterministic candidate flags inside the
  *     in-window notes (long `description`; broken path/env references);
  *   - a folder with no in-window activity is SKIPPED — it never reaches an
@@ -35,6 +35,7 @@
  * realpath. No writes, no signals.
  */
 
+import { openCodePrivateDir } from "../surfaces/opencode.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -377,7 +378,7 @@ export function indexCodexSessionsByCwd(
 }
 
 /** OpenCode: the core is the single producer of a per-personality journal
- *  `<IAPEER_ROOT>/peers/<p>/opencode/events.jsonl` (iapeer docs/20-opencode.md);
+ *  `<IAPEER_ROOT>/state/opencode/<p>/events.jsonl` (iapeer docs/20-opencode.md);
  *  consumers never read the native OpenCode SQLite. One file per personality
  *  (never rotated) — in window iff touched since the cutoff. */
 export function resolveOpencodeTranscript(
@@ -385,7 +386,7 @@ export function resolveOpencodeTranscript(
   personality: string,
   cutoffMs: number,
 ): TFile | null {
-  const fp = path.join(iapeerRoot, "peers", personality, "opencode", "events.jsonl");
+  const fp = path.join(openCodePrivateDir(iapeerRoot, personality), "events.jsonl");
   try {
     const st = fs.statSync(fp);
     return st.isFile() && st.mtimeMs >= cutoffMs ? { path: fp, mtimeMs: st.mtimeMs } : null;
