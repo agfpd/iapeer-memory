@@ -11,7 +11,9 @@
  *     author's in-window session transcripts RESOLVED TO CONCRETE FILES
  *     (claude per-peer dir; codex host-wide pool filtered by the payload's
  *     `session_meta.payload.cwd` == realpath(cwd) — host fact, verified
- *     against a live rollout), and deterministic candidate flags inside the
+ *     against a live rollout; opencode — the core's per-personality journal
+ *     `<IAPEER_ROOT>/peers/<p>/opencode/events.jsonl` with a `fromTimeMs`
+ *     window start, never the native SQLite), and deterministic candidate flags inside the
  *     in-window notes (long `description`; broken path/env references);
  *   - a folder with no in-window activity is SKIPPED — it never reaches an
  *     LLM (the «папка без работы → ноль LLM» criterion).
@@ -73,10 +75,16 @@ export type NoteCandidate = {
   flags: CandidateFlag[];
 };
 
+export type TranscriptRuntime = "claude" | "codex" | "opencode";
+
 export type ResolvedTranscripts = {
-  runtime: "claude" | "codex";
+  runtime: TranscriptRuntime;
   /** Concrete files in window — the LLM never globs, it reads this list. */
   files: string[];
+  /** opencode only: its per-personality journal is append-only and never
+   *  rotated, so the file spans all time — the reader takes only lines whose
+   *  `time` (epoch ms) is ≥ this window start. */
+  fromTimeMs?: number;
 };
 
 export type CollectedFolder = {
@@ -368,6 +376,24 @@ export function indexCodexSessionsByCwd(
   return byCwd;
 }
 
+/** OpenCode: the core is the single producer of a per-personality journal
+ *  `<IAPEER_ROOT>/peers/<p>/opencode/events.jsonl` (iapeer docs/20-opencode.md);
+ *  consumers never read the native OpenCode SQLite. One file per personality
+ *  (never rotated) — in window iff touched since the cutoff. */
+export function resolveOpencodeTranscript(
+  iapeerRoot: string,
+  personality: string,
+  cutoffMs: number,
+): TFile | null {
+  const fp = path.join(iapeerRoot, "peers", personality, "opencode", "events.jsonl");
+  try {
+    const st = fs.statSync(fp);
+    return st.isFile() && st.mtimeMs >= cutoffMs ? { path: fp, mtimeMs: st.mtimeMs } : null;
+  } catch {
+    return null;
+  }
+}
+
 function realpathOrSelf(p: string): string {
   try {
     return fs.realpathSync(p);
@@ -383,10 +409,17 @@ function realpathOrSelf(p: string): string {
  *  it empty — the consumer sees which runtimes were considered. */
 export function resolveTranscripts(
   peer: FleetPeer,
-  opts: { home: string; cutoffMs: number; codexIndex: Map<string, TFile[]>; cap: number },
+  opts: {
+    home: string;
+    cutoffMs: number;
+    codexIndex: Map<string, TFile[]>;
+    cap: number;
+    /** `IAPEER_ROOT || ~/.iapeer` — the opencode journal lives under it. */
+    iapeerRoot?: string;
+  },
 ): ResolvedTranscripts[] {
-  const tagged: Array<{ runtime: "claude" | "codex"; file: TFile }> = [];
-  const runtimes: Array<"claude" | "codex"> = [];
+  const tagged: Array<{ runtime: TranscriptRuntime; file: TFile }> = [];
+  const runtimes: TranscriptRuntime[] = [];
   if (peer.runtimes.includes("claude")) {
     runtimes.push("claude");
     const dir = path.join(opts.home, ".claude", "projects", claudeProjectSlug(peer.cwd));
@@ -400,7 +433,13 @@ export function resolveTranscripts(
       tagged.push({ runtime: "codex", file });
     }
   }
-  // Keep the most recent `cap` across BOTH runtimes (the heavy ephemeral case
+  if (peer.runtimes.includes("opencode")) {
+    runtimes.push("opencode");
+    const root = opts.iapeerRoot ?? path.join(opts.home, ".iapeer");
+    const file = resolveOpencodeTranscript(root, peer.personality, opts.cutoffMs);
+    if (file) tagged.push({ runtime: "opencode", file });
+  }
+  // Keep the most recent `cap` across ALL runtimes (the heavy ephemeral case
   // is a single runtime flooding phase D).
   let kept = tagged;
   if (opts.cap > 0 && tagged.length > opts.cap) {
@@ -412,6 +451,7 @@ export function resolveTranscripts(
       .filter((t) => t.runtime === runtime)
       .map((t) => t.file.path)
       .sort(),
+    ...(runtime === "opencode" ? { fromTimeMs: opts.cutoffMs } : {}),
   }));
 }
 
@@ -422,6 +462,8 @@ export function collect(opts: {
   agentMemoryFolder: string;
   peers: FleetPeer[];
   home: string;
+  /** Defaults to `<home>/.iapeer`. */
+  iapeerRoot?: string;
   io: CollectIo;
 }): CollectResult {
   const memoryRoot = path.join(opts.vault, opts.agentMemoryFolder);
@@ -455,6 +497,7 @@ export function collect(opts: {
           cutoffMs,
           codexIndex,
           cap: opts.io.transcriptCap,
+          iapeerRoot: opts.iapeerRoot,
         })
       : [];
     const hasTranscripts = transcripts.some((t) => t.files.length > 0);
@@ -660,6 +703,7 @@ export function cmdDreamCollect(argv: string[], egress: Egress): number {
     agentMemoryFolder,
     peers: q.peers,
     home: os.homedir(),
+    iapeerRoot: process.env.IAPEER_ROOT || path.join(os.homedir(), ".iapeer"),
     io: {
       nowMs: Date.now(),
       windowDays,

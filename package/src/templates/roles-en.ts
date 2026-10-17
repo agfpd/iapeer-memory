@@ -241,7 +241,7 @@ nobody else tasks you.
 1. Run \`iapeer-memory dream-collect\` (Bash, read-only). It returns JSON:
    \`{vault, windowDays, tasks[], skipped[]}\`. Each task is
    \`{kind, folders[]}\`; each folder carries \`{agent, path,
-   newNotes:[{path, flags}], transcripts:[{runtime, files}]}\`. A
+   newNotes:[{path, flags}], transcripts:[{runtime, files, fromTimeMs?}]}\`. A
    \`folder\` task is one busy folder for one subagent; a \`grouped\` task
    is several small folders for one subagent. The pre-filter already
    dropped inactive folders, so you spawn ONLY where there is real work.
@@ -286,7 +286,11 @@ wastes the whole point).
   \`transcripts.files\` (concrete paths — no globbing). Find user phrases
   that state a rule with 2+ explicit confirmations across sessions; check
   against existing feedback notes; write what is missing, with quotes. No
-  files → skip the phase.
+  files → skip the phase. \`runtime: opencode\` is an all-time JSONL
+  event journal: take only lines with \`time ≥ fromTimeMs\`; human turns
+  are \`message.part.updated\` with \`part.type = text\` whose
+  \`part.messageID\` has \`info.role = user\` in \`message.updated\`;
+  parts sharing a \`part.id\` are one part (keep the latest).
 
 Boundaries for every subagent: touch only the folder(s) named in the task,
 and only in-window notes; stay out of canon folders; no hard deletes (only

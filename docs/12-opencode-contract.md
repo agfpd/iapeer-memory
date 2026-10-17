@@ -68,15 +68,22 @@ failures remain fail-open and visible in the tool result.
 | Session health | plugin initialization → shared health hook | adapter loading tested; native startup proof pending |
 | Guide/index delivery, refresh/resume | core prompt composition | depends on core adapter; lifecycle proof pending |
 | Cross-runtime same personality | shared vault/daemon/fragments | HTTP identity test; actual second-runtime lifecycle proof pending |
+| Weekly transcript source | core journal + `fromTimeMs` | unit tests; live journal from the core producer pending |
 | Installed release and PM 3/3 cycles | normal core/provider lifecycle | pending; source tests do not replace installed acceptance |
 
 External OpenCode configuration is **merged**, not replaced, by inline
 configuration; managed settings can override it. Synthetic/cloud trials need
 an OS-enforced synthetic-only file/network boundary plus an effective-config
 check. Fresh HOME and inline config alone are not an isolation proof.
-Weekly transcript collection currently has Claude/Codex source readers;
-OpenCode transcript integration must be tracked separately rather than
-silently claiming collection of OpenCode-only sessions.
+Weekly transcript collection (`dream-collect`) reads the core's
+per-personality journal `<IAPEER_ROOT>/peers/<p>/opencode/events.jsonl`
+(iapeer `docs/20-opencode.md`: the core is its single producer; the native
+OpenCode SQLite is never read). The journal is never rotated, so the task
+carries `fromTimeMs` (window start) and the DreamWeaver judge reads only
+lines with `time ≥ fromTimeMs`. Scoping is by personality, so a shared cwd
+does not leak another peer's sessions. Until the core's journal producer
+ships, an OpenCode-only peer simply contributes no transcripts — the runtime
+is still listed in the task, so the gap is visible, not silent.
 
 ## Build/delivery gate
 
