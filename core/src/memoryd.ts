@@ -81,7 +81,7 @@ import {
 
 // ── identity ────────────────────────────────────────────────────────────────
 
-const KNOWN_RUNTIME_PREFIXES = ["claude-", "codex-"];
+const KNOWN_RUNTIME_PREFIXES = ["claude-", "codex-", "opencode-"];
 
 /**
  * `X-IAPeer-Identity: <runtime>-<personality>` → personality. A bare

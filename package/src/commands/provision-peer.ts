@@ -33,6 +33,7 @@ import {
   type SurfaceOutcome,
 } from "../surfaces/claude.js";
 import { provisionCodexPeer, unprovisionCodexPeer } from "../surfaces/codex.js";
+import { provisionOpenCodePeer, unprovisionOpenCodePeer } from "../surfaces/opencode.js";
 import { withProvisionLock, pidAliveProbe } from "../surfaces/lock.js";
 import { paintStatus, ui } from "../ui.js";
 
@@ -48,7 +49,7 @@ export function mcpPort(): number {
 export const OCCASIONS = ["birth", "sweep-on", "off-peer", "off-all", "remove"] as const;
 export type Occasion = (typeof OCCASIONS)[number];
 
-const RUNTIMES = ["claude", "codex"] as const;
+const RUNTIMES = ["claude", "codex", "opencode"] as const;
 
 type Flags = {
   cwd: string;
@@ -99,11 +100,14 @@ function parseFlags(
   // to bake. The core's executor supports the {personality} placeholder
   // the package sweep reads it from fleet.json. The un-verb
   // needs no identity: removal matches our key/marks, not the header value.
-  if (verb === "provision-peer" && runtime === "claude" && !personality) {
+  if (((verb === "provision-peer" && runtime === "claude") || runtime === "opencode") && !personality) {
     console.error(
-      "iapeer-memory provision-peer: --personality is required for --runtime claude " +
-        "(the literal MCP identity header is baked at provision time)",
+      `iapeer-memory ${verb}: --personality is required for --runtime ${runtime}`,
     );
+    return null;
+  }
+  if (runtime === "opencode" && !/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(personality)) {
+    console.error(`iapeer-memory ${verb}: invalid --personality (no path segments)`);
     return null;
   }
   return {
@@ -145,7 +149,9 @@ export function cmdProvisionPeer(argv: string[], egress: Egress): number {
         pidAlive: pidAliveProbe(egress),
     stateDir: paths.stateDir,
     fn: () =>
-      flags.runtime === "codex"
+      flags.runtime === "opencode"
+        ? provisionOpenCodePeer({ personality: flags.personality, port: mcpPort() })
+        : flags.runtime === "codex"
         ? provisionCodexPeer(egress, {
             cwd: flags.cwd,
             port: mcpPort(),
@@ -177,7 +183,9 @@ export function cmdUnprovisionPeer(argv: string[]): number {
     // self-break by age; a token'd LIVE lock is honoured (waits/refuses).
     stateDir: paths.stateDir,
     fn: () =>
-      flags.runtime === "codex"
+      flags.runtime === "opencode"
+        ? unprovisionOpenCodePeer({ personality: flags.personality })
+        : flags.runtime === "codex"
         ? unprovisionCodexPeer({ cwd: flags.cwd })
         : unprovisionClaudePeer({ cwd: flags.cwd }),
   });

@@ -52,13 +52,13 @@ Commands:
                             launcher, managed memoryd restart
   install-binary [--out P]  compile the stable CLI binary (~/.local/bin) —
                             init step / repair path; needs package sources
-  provision-peer --cwd P --runtime claude|codex --personality NAME [--occasion O]
+  provision-peer --cwd P --runtime claude|codex|opencode --personality NAME [--occasion O]
                             merge the direct session surfaces into one peer's
                             cwd (claude: hooks/MCP/skills; codex: project MCP +
                             hooks.json with a trust-hooks pre-seed; idempotent,
                             own keys only); the iapeer core shells into this at
                             peer birth
-  unprovision-peer --cwd P --runtime claude|codex [--occasion O]
+  unprovision-peer --cwd P --runtime claude|codex|opencode [--personality NAME] [--occasion O]
                             strip OUR surfaces from one peer's cwd (mirror)
   fm-update [ops] FILE...   structural frontmatter edits + attribution stamp
   bake FILE...              re-stamp YOUR authorship on notes you wrote via

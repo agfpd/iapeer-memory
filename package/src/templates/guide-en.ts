@@ -57,7 +57,7 @@ note on the same topic became stale: flip its \`status\` to the final token.
 
 ## How and where to write
 
-**Write and edit notes with your runtime's file tool, not bash.** claude — \`Write\`/\`Edit\`, codex — \`apply_patch\`. A bash write (\`cat\`/\`>\`/\`sed\`) is invisible to the post-write hook: memoryd mis-attributes the edit to the human and leaves a new note with no author.
+**Write and edit notes with your runtime's file tool, not bash.** claude — \`Write\`/\`Edit\`, codex — \`apply_patch\`, opencode — \`write\`/\`edit\`/\`apply_patch\`. A bash write (\`cat\`/\`>\`/\`sed\`) is invisible to the post-write hook: memoryd mis-attributes the edit to the human and leaves a new note with no author.
 
 ### Canon notes
 

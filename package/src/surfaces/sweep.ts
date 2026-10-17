@@ -22,10 +22,11 @@ import {
   type SurfaceOutcome,
 } from "./claude.js";
 import { checkCodexPeer, provisionCodexPeer, unprovisionCodexPeer } from "./codex.js";
+import { checkOpenCodePeer, provisionOpenCodePeer, unprovisionOpenCodePeer } from "./opencode.js";
 import type { Egress } from "../egress.js";
 import type { FleetPeer } from "../fleet.js";
 
-export const SESSION_RUNTIMES = ["claude", "codex"] as const;
+export const SESSION_RUNTIMES = ["claude", "codex", "opencode"] as const;
 export type SessionRuntime = (typeof SESSION_RUNTIMES)[number];
 
 export type PeerSweepResult = {
@@ -75,7 +76,9 @@ export function sweepProvision(
     }
     for (const runtime of runtimes) {
       const outcomes =
-        runtime === "codex"
+        runtime === "opencode"
+          ? provisionOpenCodePeer({ personality: peer.personality, port: opts.port })
+          : runtime === "codex"
           ? provisionCodexPeer(egress, {
               cwd: peer.cwd,
               port: opts.port,
@@ -112,7 +115,9 @@ export function sweepUnprovision(opts: { fleet: FleetPeer[] }): SweepSummary {
     // a vanished cwd is fine on the off-path — surfaces report `absent`
     for (const runtime of runtimes) {
       const outcomes =
-        runtime === "codex"
+        runtime === "opencode"
+          ? unprovisionOpenCodePeer({ personality: peer.personality })
+          : runtime === "codex"
           ? unprovisionCodexPeer({ cwd: peer.cwd })
           : unprovisionClaudePeer({ cwd: peer.cwd });
       results.push({
@@ -163,7 +168,9 @@ export function checkFleetSurfaces(
     }
     for (const runtime of runtimes) {
       const surfaceChecks =
-        runtime === "codex"
+        runtime === "opencode"
+          ? checkOpenCodePeer({ personality: peer.personality, port: opts.port })
+          : runtime === "codex"
           ? checkCodexPeer(egress, {
               cwd: peer.cwd,
               port: opts.port,

@@ -66,6 +66,7 @@ The command asks for the vault path, the language (Russian or English folder lay
 - [09 — memoryd and the CLI](09-memoryd-and-cli.md)
 - [10 — iapeer integration](10-iapeer-integration.md) — the memory slot, install, distribution
 - [11 — Configuration](11-configuration.md) — config.env, variables, lean/curated modes, how to turn curators and ticks off
+- [12 — OpenCode contract](12-opencode-contract.md) — runtime-private surfaces, attribution and acceptance evidence
 
 ## Status
 

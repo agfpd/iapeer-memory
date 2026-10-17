@@ -69,6 +69,7 @@ export function slotProvisionBlocks(binaryPath: string): {
         "unprovision-peer",
         "--cwd", "{cwd}",
         "--runtime", "{runtime}",
+        "--personality", "{personality}",
         "--occasion", "{occasion}",
       ],
     },

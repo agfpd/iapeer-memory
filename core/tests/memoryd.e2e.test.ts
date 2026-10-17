@@ -218,9 +218,19 @@ describe("memoryd.e2e — identity header", () => {
   it("parsePersonalityFromIdentity strips only known runtime prefixes", () => {
     expect(parsePersonalityFromIdentity("claude-iapeer-memory")).toBe("iapeer-memory");
     expect(parsePersonalityFromIdentity("codex-linus")).toBe("linus");
+    expect(parsePersonalityFromIdentity("opencode-iapeer-memory")).toBe("iapeer-memory");
     expect(parsePersonalityFromIdentity("boris")).toBe("boris");
     expect(parsePersonalityFromIdentity("")).toBeNull();
     expect(parsePersonalityFromIdentity(null)).toBeNull();
+  });
+
+  it("all three runtimes resolve to the same personality over HTTP MCP", async () => {
+    for (const runtime of ["claude", "codex", "opencode"]) {
+      const client = await mcpClient(`${runtime}-boris`);
+      const res = await client.callTool({ name: "memory_search", arguments: { query: "гибридный поиск" } });
+      expect((res.structuredContent as any).pipeline.caller_agent).toBe("boris");
+      await client.close();
+    }
   });
 });
 

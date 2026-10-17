@@ -46,6 +46,7 @@ function prodAnchors(): string[] {
     path.join(home, ".iapeer"),
     path.join(home, ".claude"),
     path.join(home, ".codex"),
+    path.join(home, ".config", "opencode"),
     path.join(home, "Library", "Mobile Documents"),
   ];
 }
@@ -70,7 +71,7 @@ export function isUnderProdAnchor(filePath: string): boolean {
  * authorisation — same semantics as the egress hub's `--iapeer-bin`
  * allowance).
  */
-const HARNESS_SEGMENTS = new Set([".iapeer", ".claude", ".codex"]);
+const HARNESS_SEGMENTS = new Set([".iapeer", ".claude", ".codex", ".opencode"]);
 
 function realpathOrSelf(p: string): string {
   try {

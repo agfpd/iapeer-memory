@@ -62,11 +62,14 @@ export const POST_WRITE_TOOLS: ReadonlySet<string> = new Set([
   "Edit",
   "MultiEdit",
   "apply_patch",
+  "opencode:write",
+  "opencode:edit",
+  "opencode:apply_patch",
 ]);
 
 /** apply_patch envelope markers (the public codex patch format) — the
  *  deterministic path source from tool_input's patch text. */
-const PATCH_FILE_RE = /^\*\*\* (?:Update|Add) File: (.+)$/gm;
+const PATCH_FILE_RE = /^\*\*\* (?:(?:Update|Add) File|Move to): (.+)$/gm;
 
 /** `tool_response` status lines — the VERBATIM form established by the live
  *  Ш2 e2e (codex-cli 0.138.0, gpt-5.5):
@@ -112,6 +115,24 @@ export function applyPatchPaths(event: {
   return [...found];
 }
 
+/** OpenCode after-hook args are not Claude's stdin schema. Namespaced tool
+ * names keep the two ABIs explicit. Native filePath and patchText come from
+ * tool.execute.after, not from arbitrary file.edited/watcher events (which
+ * cannot distinguish an agent's write from a human's). */
+export function postWritePaths(event: {
+  tool_name?: string;
+  cwd?: string;
+  tool_input?: unknown;
+  tool_response?: unknown;
+}): string[] {
+  const tool = event.tool_name ?? "";
+  if (tool === "apply_patch" || tool === "opencode:apply_patch") return applyPatchPaths(event);
+  const input = event.tool_input as { file_path?: string; filePath?: string } | undefined;
+  const raw = tool.startsWith("opencode:") ? input?.filePath : input?.file_path;
+  if (typeof raw !== "string" || !raw) return [];
+  return [path.resolve(event.cwd ?? process.cwd(), raw)];
+}
+
 /** Min interval between background verify-kicks (anti-storm). */
 export const KICK_DEBOUNCE_MS = 5 * 60_000;
 
@@ -147,10 +168,7 @@ export function runPostWrite(
 
   // Path candidates: claude tools carry ONE file_path; codex apply_patch
   // carries a patch over possibly MANY files (Ш2).
-  const candidates =
-    tool === "apply_patch"
-      ? applyPatchPaths(event)
-      : [event.tool_input?.file_path ?? ""];
+  const candidates = postWritePaths(event);
 
   const vault = env.IAPEER_MEMORY_VAULT_PATH ?? "";
   if (!vault) return silent; // socket without a provisioned system
@@ -353,8 +371,7 @@ export async function collectDedupAndLinkHints(
   // Candidate files: claude Write/Edit carry one file_path; codex apply_patch
   // carries a patch over possibly many (RUNTIME-AGNOSTIC — the additionalContext
   // hint reaches both runtimes via the same channel).
-  const candidates =
-    tool === "apply_patch" ? applyPatchPaths(event) : [event.tool_input?.file_path ?? ""];
+  const candidates = postWritePaths(event);
   const vaultPrefix = vault.endsWith(path.sep) ? vault : vault + path.sep;
   const files = candidates.filter(
     (p) => p.endsWith(".md") && p.startsWith(vaultPrefix) && fs.existsSync(p),
@@ -589,7 +606,7 @@ export function bashVaultWriteReminder(
   } catch {
     return null;
   }
-  if (event.tool_name !== "Bash") return null;
+  if (event.tool_name !== "Bash" && event.tool_name !== "opencode:bash") return null;
   const cmd = event.tool_input?.command ?? "";
   const vault = env.IAPEER_MEMORY_VAULT_PATH ?? "";
   if (!cmd || !vault) return null;

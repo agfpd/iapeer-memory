@@ -78,6 +78,7 @@ describe("memory-provider slot (v1.2)", () => {
         "unprovision-peer",
         "--cwd", "{cwd}",
         "--runtime", "{runtime}",
+        "--personality", "{personality}",
         "--occasion", "{occasion}",
       ],
     });

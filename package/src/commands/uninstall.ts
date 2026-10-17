@@ -165,7 +165,7 @@ export function cmdUninstall(argv: string[], egress: Egress): number {
   // be resolved (peer already gone / core unreachable), try each agentic runtime
   // so a trigger is never orphaned by a single wrong guess (no hardcode claude).
   const declaredRuntime = resolveRegistrantRuntime(egress, { iapeerBin });
-  const tryRuntimes = declaredRuntime ? [declaredRuntime] : ["claude", "codex"];
+  const tryRuntimes = declaredRuntime ? [declaredRuntime] : ["claude", "codex", "opencode"];
   const unregAcross = (
     send: (runtime: string) => { ok: boolean; detail: string },
   ): { ok: boolean; detail: string } => {

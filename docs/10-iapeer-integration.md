@@ -43,7 +43,10 @@ The surface set depends on the runtime:
 | **Write hooks** | stamping the service fields on note write + a health check at session start | `<cwd>/.claude/settings.json` | `<cwd>/.codex/hooks.json` |
 | **Skills** | four skills that are facades over operator commands: `init`, `status`, `migrate`, `distill` | `<cwd>/.claude/skills/…` | — (codex gets no skills) |
 
-Memory access — MCP search, write hooks, map delivery into the prompt — is identical on both runtimes. The one difference: skills (convenience wrappers over operator commands) are installed for claude only; that doesn't affect the memory itself.
+OpenCode uses personality/runtime-private surfaces rather than cwd config;
+see [12 — OpenCode contract](12-opencode-contract.md) for ownership, the core
+launch joint and verification status. Guide/index and memoryd remain shared
+with Claude/Codex. Skills (operator-command wrappers) are Claude-only.
 
 ### claude/codex parity: one personality, one memory
 

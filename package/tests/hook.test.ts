@@ -53,6 +53,20 @@ function writeEvent(tool: string, filePath: string): string {
 }
 
 describe("hook post-write", () => {
+  it("OpenCode native write/edit and multi-file patch/move stamp the same personality", () => {
+    const first = path.join(vault, "01_Knowledge", "First.md");
+    const second = path.join(vault, "01_Knowledge", "Second.md");
+    const moved = path.join(vault, "01_Knowledge", "Moved.md");
+    for (const file of [first, second, moved]) fs.writeFileSync(file, "---\ntags: [Memory]\n---\n\nBody.\n");
+    for (const tool of ["write", "edit"]) {
+      const result = runPostWrite(JSON.stringify({ tool_name: `opencode:${tool}`, cwd: vault, tool_input: { filePath: "01_Knowledge/First.md" } }), env());
+      expect(result.stamped).toBe(true);
+      expect(fs.readFileSync(first, "utf-8")).toContain("last_edited_by: tester");
+    }
+    const patchText = "*** Begin Patch\n*** Add File: 01_Knowledge/Second.md\n+body\n*** Update File: 01_Knowledge/Old.md\n*** Move to: 01_Knowledge/Moved.md\n@@\n-old\n+new\n*** End Patch";
+    expect(runPostWrite(JSON.stringify({ tool_name: "opencode:apply_patch", cwd: vault, tool_input: { patchText } }), env()).stamped).toBe(true);
+    for (const file of [second, moved]) expect(fs.readFileSync(file, "utf-8")).toContain("last_edited_by: tester");
+  });
   it("stamps a vault note through the shared fill (last_edited_by + needs_review)", () => {
     const file = path.join(vault, "01_Knowledge", "Note.md");
     fs.writeFileSync(file, "---\ntitle: Note\n---\n\nBody.\n");

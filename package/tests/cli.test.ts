@@ -498,6 +498,14 @@ describe("install-binary command", () => {
     const ver = Bun.spawnSync([out, "version"], { env: scrubbedEnv() });
     const pkg = JSON.parse(fs.readFileSync(path.join(PKG_DIR, "package.json"), "utf-8"));
     expect(ver.stdout.toString().trim()).toBe(pkg.version);
+    // The release form must also materialize closure-free plugin JS. A
+    // source-only .toString() test would miss bundler-generated references.
+    const provision = Bun.spawnSync([out, "provision-peer", "--cwd", tmp, "--runtime", "opencode", "--personality", "compiled-test"], {
+      env: scrubbedEnv({ IAPEER_MEMORY_BINARY_PATH: out }),
+    });
+    expect(provision.exitCode).toBe(0);
+    const plugin = path.join(tmp, "iapeer-root", "peers", "compiled-test", "opencode", "iapeer-memory-plugin.mjs");
+    expect(fs.readFileSync(plugin, "utf-8")).toContain("export default");
   }, 30_000);
 });
 
