@@ -29,10 +29,10 @@
  * (`launcher → exec binary memoryd`), so a single TCC subject covers the
  * CLI and the daemon.
  *
- * Failure policy: SOFT — the binary works ad-hoc-signed exactly as before;
- * a signing hiccup must never break install/update (reported loud: the
- * operator learns TCC prompts will re-appear). 90 s ceiling so an
- * unanswered keychain prompt can't wedge an unattended update.
+ * This helper reports signing failure; installBinary validates the candidate
+ * and preserves the previous installation rather than activating it. A
+ * linker signature is not evidence of executability. 90 s ceiling so an
+ * unanswered keychain prompt cannot wedge an unattended update.
  */
 
 import fs from "node:fs";
@@ -71,7 +71,7 @@ export type SigningOutcome = {
     | "signed" // re-signed with the existing identity
     | "signed-new-identity" // identity created this run (the ONE install-time event)
     | "skipped-sandbox" // tests never touch the real keychain
-    | "failed-soft"; // binary stays ad-hoc (works; TCC prompts return)
+    | "failed-soft"; // historical outcome name; installer rejects this candidate
   detail?: string;
 };
 
@@ -146,7 +146,7 @@ export function signInstalledBinary(
     if (!c.ok) {
       return {
         state: "failed-soft",
-        detail: `${c.detail} — binary stays ad-hoc-signed (works, but TCC prompts will re-appear after updates)`,
+        detail: `${c.detail} — candidate not activated; TCC prompts will re-appear if stable identity is bypassed`,
       };
     }
     created = true;
@@ -157,7 +157,7 @@ export function signInstalledBinary(
   if (sign.status !== 0) {
     return {
       state: "failed-soft",
-      detail: `codesign failed: ${sign.stderr.trim().split("\n")[0] ?? `exit ${sign.status}`} — binary stays ad-hoc-signed (works, but TCC prompts will re-appear after updates)`,
+      detail: `codesign failed: ${sign.stderr.trim().split("\n")[0] ?? `exit ${sign.status}`} — candidate not activated; TCC prompts will re-appear if stable identity is bypassed`,
     };
   }
   return created ? { state: "signed-new-identity" } : { state: "signed" };

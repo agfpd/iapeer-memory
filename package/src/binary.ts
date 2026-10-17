@@ -23,9 +23,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import type { Egress } from "./egress.js";
 import { signInstalledBinary, type SigningOutcome } from "./signing.js";
-import { guardedUnlinkSync, guardedRenameSync } from "@agfpd/iapeer-memory-core";
+import { assertSandboxWritablePath, guardedUnlinkSync, guardedRenameSync } from "@agfpd/iapeer-memory-core";
+import { packageVersion } from "./version.js";
 
 export function isCompiledRuntime(): boolean {
   return import.meta.url.includes("/$bunfs/");
@@ -44,12 +46,15 @@ export function installBinary(
   if (isCompiledRuntime()) {
     return { action: "skipped-compiled", outPath };
   }
+  // The compiler and codesign are external writers: assert BEFORE spawning,
+  // not merely at rename (which would be too late for a sandbox leak).
+  assertSandboxWritablePath(outPath, "install-binary");
 
   const cliPath = new URL("./cli.ts", import.meta.url).pathname;
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   const tmp = path.join(
     path.dirname(outPath),
-    `.${path.basename(outPath)}.build.tmp`,
+    `.${path.basename(outPath)}.${crypto.randomBytes(6).toString("hex")}.build.tmp`,
   );
 
   // Self-runtime spawn (egress allowance 2): compiling OUR cli with OUR bun
@@ -71,11 +76,32 @@ export function installBinary(
     };
   }
 
+  const fail = (detail: string): InstallBinaryOutcome => {
+    if (fs.existsSync(tmp)) guardedUnlinkSync(tmp);
+    return { action: "failed", outPath, detail: `${detail} — previous installation unchanged` };
+  };
   fs.chmodSync(tmp, 0o755);
-  guardedRenameSync(tmp, outPath); // atomic swap — safe over a running binary on macOS
-  // Stable-identity re-sign on EVERY compile path (TCC grants survive
-  // updates — contract with iapeer, see signing.ts). Soft-fail by design.
-  const signing = signInstalledBinary(egress, outPath);
+  // Never activate an unverified candidate. The stable-identity signature
+  // (and its TCC subject) is applied BEFORE the atomic swap. Tests do not
+  // touch the keychain; they ad-hoc sign ONLY this asserted tmp candidate.
+  let signing: SigningOutcome;
+  if (egress.refused && process.platform === "darwin") {
+    const sign = egress.spawnSync(["/usr/bin/codesign", "-f", "-s", "-", "--identifier", "com.agfpd.iapeer-memory.test", tmp], { explicitBin: true, timeoutMs: 30_000 });
+    if (sign.exitCode !== 0) return fail(`sandbox candidate signing failed: ${sign.stderr || sign.spawnError}`);
+    signing = { state: "skipped-sandbox", detail: "stable identity skipped; isolated candidate ad-hoc signed" };
+  } else {
+    signing = signInstalledBinary(egress, tmp);
+    if (signing.state === "failed-soft") return fail(`candidate signing failed: ${signing.detail}`);
+  }
+  if (process.platform === "darwin") {
+    const verify = egress.spawnSync(["/usr/bin/codesign", "--verify", "--strict", tmp], { explicitBin: true, timeoutMs: 30_000 });
+    if (verify.exitCode !== 0) return fail(`candidate signature invalid: ${verify.stderr || verify.spawnError}`);
+  }
+  const probe = egress.spawnSync([tmp, "version"], { explicitBin: true, timeoutMs: 10_000 });
+  if (probe.exitCode !== 0 || probe.stdout.trim() !== packageVersion()) {
+    return fail(`candidate version probe failed (exit ${probe.exitCode}, expected ${packageVersion()}, got ${JSON.stringify(probe.stdout.trim())}): ${probe.stderr || probe.spawnError || ""}`);
+  }
+  guardedRenameSync(tmp, outPath); // only now replace the working installation
   return { action: "compiled", outPath, bytes: fs.statSync(outPath).size, signing };
 }
 
