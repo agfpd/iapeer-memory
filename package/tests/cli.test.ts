@@ -501,7 +501,7 @@ describe("install-binary command", () => {
     // The release form must also materialize closure-free plugin JS. A
     // source-only .toString() test would miss bundler-generated references.
     const provision = Bun.spawnSync([out, "provision-peer", "--cwd", tmp, "--runtime", "opencode", "--personality", "compiled-test"], {
-      env: scrubbedEnv({ IAPEER_MEMORY_BINARY_PATH: out }),
+      env: scrubbedEnv({ IAPEER_MEMORY_BINARY_PATH: out, IAPEER_PRIVATE_DIR: path.join(tmp, "iapeer-root", "state", "opencode", "compiled-test") }),
     });
     expect(provision.exitCode).toBe(0);
     const plugin = path.join(tmp, "iapeer-root", "state", "opencode", "compiled-test", "iapeer-memory-plugin.mjs");

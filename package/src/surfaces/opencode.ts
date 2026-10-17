@@ -11,23 +11,21 @@ import { memoryPaths } from "../paths.js";
 import { readJsonObject, sameJson, writeFileAtomic, type SurfaceOutcome } from "./claude.js";
 import { openCodePluginSource, OPENCODE_PLUGIN_MARKER } from "./opencode-plugin.js";
 
-/** `privateDir`: the core-supplied runtime-private directory (slot env
- *  `IAPEER_PRIVATE_DIR` / `{privateDir}`) — authoritative when given. Paths
- *  without the core (sweep/verify) fall back to the documented layout
- *  `<root>/state/opencode/<p>/` (iapeer docs/20, ABI as of core 7e41813). */
-type Options = { personality: string; root?: string; privateDir?: string };
+/** `privateDir`: the core-owned runtime-private directory — from slot env
+ *  `IAPEER_PRIVATE_DIR` (core-launched verbs) or `iapeer private-dir`
+ *  (sweep/verify). This product never derives the layout itself. */
+type Options = { personality: string; privateDir: string };
 type ProvisionOptions = Options & { port: number; binary?: string };
 
 export function openCodePaths(opts: Options): { config: string; plugin: string } {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(opts.personality)) {
     throw new Error("OpenCode surfaces require a valid --personality (no path segments)");
   }
-  const dir = opts.privateDir ?? openCodePrivateDir(opts.root ?? path.dirname(memoryPaths().slotPath), opts.personality);
+  if (!path.isAbsolute(opts.privateDir)) {
+    throw new Error(`OpenCode private dir must be absolute (got "${opts.privateDir}")`);
+  }
+  const dir = opts.privateDir;
   return { config: path.join(dir, "iapeer-memory.json"), plugin: path.join(dir, "iapeer-memory-plugin.mjs") };
-}
-
-export function openCodePrivateDir(iapeerRoot: string, personality: string): string {
-  return path.join(iapeerRoot, "state", "opencode", personality);
 }
 
 export function expectedOpenCodeMcp(port: number): Record<string, unknown> {

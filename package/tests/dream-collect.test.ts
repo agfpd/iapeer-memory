@@ -323,7 +323,7 @@ describe("resolveTranscripts — opencode journal", () => {
     const cutoffMs = NOW - 7 * DAY;
     const got = resolveTranscripts(
       { personality: "p", cwd: "/nope", runtimes: ["opencode"] },
-      { home: tmp, cutoffMs, codexIndex: new Map(), cap: 0, iapeerRoot: root },
+      { home: tmp, cutoffMs, codexIndex: new Map(), cap: 0, opencodePrivateDir: (p) => ({ dir: path.join(root, "state", "opencode", p) }) },
     );
     expect(got).toEqual([{ runtime: "opencode", files: [fp], fromTimeMs: cutoffMs }]);
   });
@@ -334,11 +334,19 @@ describe("resolveTranscripts — opencode journal", () => {
     for (const personality of ["old", "missing"]) {
       const got = resolveTranscripts(
         { personality, cwd: "/nope", runtimes: ["opencode"] },
-        { home: tmp, cutoffMs: NOW - 7 * DAY, codexIndex: new Map(), cap: 0, iapeerRoot: root },
+        { home: tmp, cutoffMs: NOW - 7 * DAY, codexIndex: new Map(), cap: 0, opencodePrivateDir: (p) => ({ dir: path.join(root, "state", "opencode", p) }) },
       );
       expect(got[0]!.runtime).toBe("opencode");
       expect(got[0]!.files).toEqual([]);
     }
+  });
+
+  it("an unanswered core query lists opencode with the error and no files (visible gap)", () => {
+    const got = resolveTranscripts(
+      { personality: "p", cwd: "/nope", runtimes: ["opencode"] },
+      { home: tmp, cutoffMs: NOW - 7 * DAY, codexIndex: new Map(), cap: 0, opencodePrivateDir: () => ({ error: "core did not answer" }) },
+    );
+    expect(got).toEqual([{ runtime: "opencode", files: [], fromTimeMs: NOW - 7 * DAY, error: "core did not answer" }]);
   });
 
   it("journal is scoped by personality, not cwd — a shared cwd does not leak", () => {
@@ -346,7 +354,7 @@ describe("resolveTranscripts — opencode journal", () => {
     writeAt(path.join(root, "state", "opencode", "a", "events.jsonl"), "{}\n", inWindowSec);
     const got = resolveTranscripts(
       { personality: "b", cwd: "/shared", runtimes: ["opencode"] },
-      { home: tmp, cutoffMs: NOW - 7 * DAY, codexIndex: new Map(), cap: 0, iapeerRoot: root },
+      { home: tmp, cutoffMs: NOW - 7 * DAY, codexIndex: new Map(), cap: 0, opencodePrivateDir: (p) => ({ dir: path.join(root, "state", "opencode", p) }) },
     );
     expect(got[0]!.files).toEqual([]);
   });

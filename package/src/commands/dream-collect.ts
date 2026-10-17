@@ -12,8 +12,8 @@
  *     (claude per-peer dir; codex host-wide pool filtered by the payload's
  *     `session_meta.payload.cwd` == realpath(cwd) — host fact, verified
  *     against a live rollout; opencode — the core's per-personality journal
- *     `<IAPEER_ROOT>/state/opencode/<p>/events.jsonl` with a `fromTimeMs`
- *     window start, never the native SQLite), and deterministic candidate flags inside the
+ *     `<privateDir>/events.jsonl`, the dir answered by `iapeer private-dir`,
+ *     with a `fromTimeMs` window start, never the native SQLite), and deterministic candidate flags inside the
  *     in-window notes (long `description`; broken path/env references);
  *   - a folder with no in-window activity is SKIPPED — it never reaches an
  *     LLM (the «папка без работы → ноль LLM» criterion).
@@ -35,7 +35,7 @@
  * realpath. No writes, no signals.
  */
 
-import { openCodePrivateDir } from "../surfaces/opencode.js";
+import { queryPrivateDir } from "../fleet.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -86,7 +86,13 @@ export type ResolvedTranscripts = {
    *  rotated, so the file spans all time — the reader takes only lines whose
    *  `time` (epoch ms) is ≥ this window start. */
   fromTimeMs?: number;
+  /** opencode only: the core did not answer the journal location — the
+   *  runtime is listed with no files so the gap is visible, not silent. */
+  error?: string;
 };
+
+/** Core-answered private dir of a personality's opencode endpoint. */
+export type PrivateDirResolver = (personality: string) => { dir: string } | { error: string };
 
 export type CollectedFolder = {
   agent: string;
@@ -378,15 +384,15 @@ export function indexCodexSessionsByCwd(
 }
 
 /** OpenCode: the core is the single producer of a per-personality journal
- *  `<IAPEER_ROOT>/state/opencode/<p>/events.jsonl` (iapeer docs/20-opencode.md);
- *  consumers never read the native OpenCode SQLite. One file per personality
- *  (never rotated) — in window iff touched since the cutoff. */
+ *  `<privateDir>/events.jsonl` (iapeer docs/20-opencode.md; the directory is
+ *  answered by the core, never derived here); consumers never read the
+ *  native OpenCode SQLite. One file per personality (never rotated) — in
+ *  window iff touched since the cutoff. */
 export function resolveOpencodeTranscript(
-  iapeerRoot: string,
-  personality: string,
+  privateDir: string,
   cutoffMs: number,
 ): TFile | null {
-  const fp = path.join(openCodePrivateDir(iapeerRoot, personality), "events.jsonl");
+  const fp = path.join(privateDir, "events.jsonl");
   try {
     const st = fs.statSync(fp);
     return st.isFile() && st.mtimeMs >= cutoffMs ? { path: fp, mtimeMs: st.mtimeMs } : null;
@@ -415,11 +421,12 @@ export function resolveTranscripts(
     cutoffMs: number;
     codexIndex: Map<string, TFile[]>;
     cap: number;
-    /** `IAPEER_ROOT || ~/.iapeer` — the opencode journal lives under it. */
-    iapeerRoot?: string;
+    /** Core-answered opencode private dir (journal location). */
+    opencodePrivateDir?: PrivateDirResolver;
   },
 ): ResolvedTranscripts[] {
   const tagged: Array<{ runtime: TranscriptRuntime; file: TFile }> = [];
+  let opencodeError: string | undefined;
   const runtimes: TranscriptRuntime[] = [];
   if (peer.runtimes.includes("claude")) {
     runtimes.push("claude");
@@ -436,9 +443,15 @@ export function resolveTranscripts(
   }
   if (peer.runtimes.includes("opencode")) {
     runtimes.push("opencode");
-    const root = opts.iapeerRoot ?? path.join(opts.home, ".iapeer");
-    const file = resolveOpencodeTranscript(root, peer.personality, opts.cutoffMs);
-    if (file) tagged.push({ runtime: "opencode", file });
+    const q = opts.opencodePrivateDir
+      ? opts.opencodePrivateDir(peer.personality)
+      : { error: "no core private-dir resolver" };
+    if ("dir" in q) {
+      const file = resolveOpencodeTranscript(q.dir, opts.cutoffMs);
+      if (file) tagged.push({ runtime: "opencode", file });
+    } else {
+      opencodeError = q.error;
+    }
   }
   // Keep the most recent `cap` across ALL runtimes (the heavy ephemeral case
   // is a single runtime flooding phase D).
@@ -453,6 +466,7 @@ export function resolveTranscripts(
       .map((t) => t.file.path)
       .sort(),
     ...(runtime === "opencode" ? { fromTimeMs: opts.cutoffMs } : {}),
+    ...(runtime === "opencode" && opencodeError ? { error: opencodeError } : {}),
   }));
 }
 
@@ -463,8 +477,7 @@ export function collect(opts: {
   agentMemoryFolder: string;
   peers: FleetPeer[];
   home: string;
-  /** Defaults to `<home>/.iapeer`. */
-  iapeerRoot?: string;
+  opencodePrivateDir?: PrivateDirResolver;
   io: CollectIo;
 }): CollectResult {
   const memoryRoot = path.join(opts.vault, opts.agentMemoryFolder);
@@ -498,7 +511,7 @@ export function collect(opts: {
           cutoffMs,
           codexIndex,
           cap: opts.io.transcriptCap,
-          iapeerRoot: opts.iapeerRoot,
+          opencodePrivateDir: opts.opencodePrivateDir,
         })
       : [];
     const hasTranscripts = transcripts.some((t) => t.files.length > 0);
@@ -704,7 +717,7 @@ export function cmdDreamCollect(argv: string[], egress: Egress): number {
     agentMemoryFolder,
     peers: q.peers,
     home: os.homedir(),
-    iapeerRoot: process.env.IAPEER_ROOT || path.join(os.homedir(), ".iapeer"),
+    opencodePrivateDir: (p) => queryPrivateDir(egress, p, { runtime: "opencode", iapeerBin }),
     io: {
       nowMs: Date.now(),
       windowDays,

@@ -14,6 +14,7 @@
  * acquisition, not per-peer — the sweep body is pure file I/O).
  */
 
+import { queryPrivateDir } from "../fleet.js";
 import fs from "node:fs";
 import {
   checkClaudePeer,
@@ -43,6 +44,20 @@ export type SweepSummary = {
   /** peers skipped: no session runtimes in the map entry / vanished cwd */
   skipped: Array<{ personality: string; reason: string }>;
 };
+
+/** OpenCode surfaces live in the core-owned private dir — asked from the
+ *  core per peer; an unanswered query is a loud failed outcome, never a
+ *  guessed path. */
+function withPrivateDir(
+  egress: Egress,
+  personality: string,
+  iapeerBin: string | undefined,
+  surface: SurfaceOutcome["surface"],
+  fn: (privateDir: string) => SurfaceOutcome[],
+): SurfaceOutcome[] {
+  const q = queryPrivateDir(egress, personality, { runtime: "opencode", iapeerBin });
+  return "dir" in q ? fn(q.dir) : [{ surface, action: "failed", path: "(core private-dir)", detail: q.error }];
+}
 
 function sessionRuntimesOf(peer: FleetPeer): SessionRuntime[] {
   return SESSION_RUNTIMES.filter((r) => peer.runtimes.includes(r));
@@ -77,7 +92,8 @@ export function sweepProvision(
     for (const runtime of runtimes) {
       const outcomes =
         runtime === "opencode"
-          ? provisionOpenCodePeer({ personality: peer.personality, port: opts.port })
+          ? withPrivateDir(egress, peer.personality, opts.iapeerBin, "hooks",
+              (privateDir) => provisionOpenCodePeer({ personality: peer.personality, port: opts.port, privateDir }))
           : runtime === "codex"
           ? provisionCodexPeer(egress, {
               cwd: peer.cwd,
@@ -103,7 +119,7 @@ export function sweepProvision(
   return { results, skipped };
 }
 
-export function sweepUnprovision(opts: { fleet: FleetPeer[] }): SweepSummary {
+export function sweepUnprovision(egress: Egress, opts: { fleet: FleetPeer[]; iapeerBin?: string }): SweepSummary {
   const results: PeerSweepResult[] = [];
   const skipped: SweepSummary["skipped"] = [];
   for (const peer of opts.fleet) {
@@ -116,7 +132,8 @@ export function sweepUnprovision(opts: { fleet: FleetPeer[] }): SweepSummary {
     for (const runtime of runtimes) {
       const outcomes =
         runtime === "opencode"
-          ? unprovisionOpenCodePeer({ personality: peer.personality })
+          ? withPrivateDir(egress, peer.personality, opts.iapeerBin, "hooks",
+              (privateDir) => unprovisionOpenCodePeer({ personality: peer.personality, privateDir }))
           : runtime === "codex"
           ? unprovisionCodexPeer({ cwd: peer.cwd })
           : unprovisionClaudePeer({ cwd: peer.cwd });
@@ -169,7 +186,12 @@ export function checkFleetSurfaces(
     for (const runtime of runtimes) {
       const surfaceChecks =
         runtime === "opencode"
-          ? checkOpenCodePeer({ personality: peer.personality, port: opts.port })
+          ? (() => {
+              const q = queryPrivateDir(egress, peer.personality, { runtime: "opencode", iapeerBin: opts.iapeerBin });
+              return "dir" in q
+                ? checkOpenCodePeer({ personality: peer.personality, port: opts.port, privateDir: q.dir })
+                : [{ surface: "hooks" as const, ok: false, detail: q.error }];
+            })()
           : runtime === "codex"
           ? checkCodexPeer(egress, {
               cwd: peer.cwd,

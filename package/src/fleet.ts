@@ -180,3 +180,33 @@ export function writeFleetMap(
     detail: `${peers.length} peer(s) → ${opts.fleetMapPath}`,
   };
 }
+
+/**
+ * The core-owned runtime-private directory of a peer endpoint (iapeer
+ * docs/15 + docs/20: `iapeer private-dir <p> --runtime <r>`). Consumers the
+ * core does not launch — sweep, verify, the weekly collector — get the path
+ * HERE and never derive the layout from the root. Failure is loud: an older
+ * core without the verb, an unregistered peer or an undeclared runtime all
+ * come back as `{ error }`, never as a guessed path.
+ */
+export function queryPrivateDir(
+  egress: Egress,
+  personality: string,
+  opts: { runtime?: string; iapeerBin?: string } = {},
+): { dir: string } | { error: string } {
+  const bin = opts.iapeerBin ?? IAPEER_BIN;
+  const proc = egress.spawnSync([bin, "private-dir", personality, "--runtime", opts.runtime ?? "opencode"], {
+    explicitBin: opts.iapeerBin !== undefined,
+  });
+  if (proc.refused) return { error: "core private-dir query suppressed (test sandbox) — pass a fake iapeerBin" };
+  if (proc.spawnError) return { error: `${bin} unavailable: ${proc.spawnError}` };
+  if (proc.exitCode !== 0) {
+    const why = proc.stderr.trim().split("\n")[0] || `exit ${proc.exitCode}`;
+    return { error: `core did not answer private-dir for ${personality}: ${why}`.slice(0, 240) };
+  }
+  const dir = proc.stdout.trim();
+  if (!dir.startsWith("/") || dir.includes("\n")) {
+    return { error: `core private-dir for ${personality}: not an absolute path (${JSON.stringify(dir.slice(0, 80))})` };
+  }
+  return { dir };
+}

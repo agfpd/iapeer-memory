@@ -121,7 +121,7 @@ export function cmdUninstall(argv: string[], egress: Egress): number {
       const locked = withProvisionLock({
         pidAlive: pidAliveProbe(egress),
         stateDir: paths.stateDir,
-        fn: () => sweepUnprovision({ fleet }),
+        fn: () => sweepUnprovision(egress, { fleet }),
       });
       if (!locked.acquired) {
         row("surfaces", ui.red(locked.detail));

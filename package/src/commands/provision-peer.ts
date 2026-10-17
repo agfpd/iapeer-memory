@@ -24,6 +24,7 @@
  * not delivered — P5 §4.2). Exit: 0 ok, 1 a surface failed, 2 usage.
  */
 
+import { queryPrivateDir } from "../fleet.js";
 import fs from "node:fs";
 import type { Egress } from "../egress.js";
 import { memoryPaths } from "../paths.js";
@@ -60,13 +61,20 @@ type Flags = {
   iapeerBin?: string;
 };
 
-/** The core hands a runtime-private directory to slot commands via env
- *  (only for runtimes that have one — opencode). Must be absolute. */
-function corePrivateDir(): string | undefined {
-  const d = process.env.IAPEER_PRIVATE_DIR;
-  if (!d) return undefined;
-  if (!d.startsWith("/")) throw new Error(`IAPEER_PRIVATE_DIR must be absolute (got "${d}")`);
-  return d;
+/** The runtime-private directory for an opencode slot verb: the core hands
+ *  it via env `IAPEER_PRIVATE_DIR` when it launches the verb; a manual run
+ *  asks the core (`iapeer private-dir`). Never derived here. */
+function resolvePrivateDir(verb: string, flags: Flags, egress: Egress): string | null {
+  const env = process.env.IAPEER_PRIVATE_DIR;
+  if (env) {
+    if (env.startsWith("/")) return env;
+    console.error(`iapeer-memory ${verb}: IAPEER_PRIVATE_DIR must be absolute (got "${env}")`);
+    return null;
+  }
+  const q = queryPrivateDir(egress, flags.personality, { runtime: "opencode", iapeerBin: flags.iapeerBin });
+  if ("dir" in q) return q.dir;
+  console.error(`iapeer-memory ${verb}: ${q.error}`);
+  return null;
 }
 
 function parseFlags(
@@ -154,12 +162,14 @@ export function cmdProvisionPeer(argv: string[], egress: Egress): number {
     return 1;
   }
   const paths = memoryPaths();
+  const privateDir = flags.runtime === "opencode" ? resolvePrivateDir("provision-peer", flags, egress) : "";
+  if (privateDir === null) return 1;
   const locked = withProvisionLock({
         pidAlive: pidAliveProbe(egress),
     stateDir: paths.stateDir,
     fn: () =>
       flags.runtime === "opencode"
-        ? provisionOpenCodePeer({ personality: flags.personality, port: mcpPort(), privateDir: corePrivateDir() })
+        ? provisionOpenCodePeer({ personality: flags.personality, port: mcpPort(), privateDir })
         : flags.runtime === "codex"
         ? provisionCodexPeer(egress, {
             cwd: flags.cwd,
@@ -181,9 +191,11 @@ export function cmdProvisionPeer(argv: string[], egress: Egress): number {
   return report("provision-peer", flags, locked.result);
 }
 
-export function cmdUnprovisionPeer(argv: string[]): number {
+export function cmdUnprovisionPeer(argv: string[], egress: Egress): number {
   const flags = parseFlags("unprovision-peer", argv, "off-peer");
   if (!flags) return 2;
+  const privateDir = flags.runtime === "opencode" ? resolvePrivateDir("unprovision-peer", flags, egress) : "";
+  if (privateDir === null) return 1;
   // a vanished cwd is a VALID un-provision target (occasion=remove races the
   // peer directory removal) — every surface simply reports `absent`
   const paths = memoryPaths();
@@ -193,7 +205,7 @@ export function cmdUnprovisionPeer(argv: string[]): number {
     stateDir: paths.stateDir,
     fn: () =>
       flags.runtime === "opencode"
-        ? unprovisionOpenCodePeer({ personality: flags.personality, privateDir: corePrivateDir() })
+        ? unprovisionOpenCodePeer({ personality: flags.personality, privateDir })
         : flags.runtime === "codex"
         ? unprovisionCodexPeer({ cwd: flags.cwd })
         : unprovisionClaudePeer({ cwd: flags.cwd }),

@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { readFleetMap, writeFleetMap } from "../src/fleet.js";
+import { readFleetMap, writeFleetMap, queryPrivateDir } from "../src/fleet.js";
+import type { Egress } from "../src/egress.js";
 import { liveEgress } from "../src/egress.js";
 
 // Refusing handle (preload sandbox env); explicit fake bins spawn for real.
@@ -93,5 +94,32 @@ describe("writeFleetMap (personality → cwd joint)", () => {
 
     // every failure left the existing map intact (memoryd keeps a working fleet)
     expect(JSON.parse(fs.readFileSync(mapPath, "utf-8")).peers[0].personality).toBe("keep");
+  });
+});
+
+describe("queryPrivateDir — the core answers, the product never derives", () => {
+  const eg = (r: { exitCode?: number; stdout?: string; stderr?: string; refused?: boolean; spawnError?: string }, seen: string[][] = []) =>
+    ({
+      refused: false,
+      spawnSync(argv: string[]) { seen.push(argv); return { exitCode: 0, stdout: "", stderr: "", ...r }; },
+    }) as unknown as Egress;
+
+  it("asks `iapeer private-dir <p> --runtime opencode` and returns the absolute answer", () => {
+    const seen: string[][] = [];
+    expect(queryPrivateDir(eg({ stdout: "/root/state/opencode/p\n" }, seen), "p", { iapeerBin: "/bin/iapeer" }))
+      .toEqual({ dir: "/root/state/opencode/p" });
+    expect(seen[0]).toEqual(["/bin/iapeer", "private-dir", "p", "--runtime", "opencode"]);
+  });
+
+  it("an older core, unknown peer, relative answer or sandbox refusal is an error, never a path", () => {
+    for (const r of [
+      { exitCode: 2, stderr: 'iapeer: unknown verb "private-dir"' },
+      { exitCode: 1, stderr: "peer not registered" },
+      { stdout: "relative/dir" },
+      { refused: true },
+      { spawnError: "ENOENT" },
+    ]) {
+      expect("error" in queryPrivateDir(eg(r), "p")).toBe(true);
+    }
   });
 });

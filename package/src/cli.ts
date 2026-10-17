@@ -148,7 +148,7 @@ export async function main(argv: string[]): Promise<number> {
     case "provision-peer":
       return cmdProvisionPeer(rest, egress);
     case "unprovision-peer":
-      return cmdUnprovisionPeer(rest);
+      return cmdUnprovisionPeer(rest, egress);
     case "fm-update":
       return cmdFmUpdate(rest);
     case "bake":
