@@ -290,7 +290,12 @@ wastes the whole point).
   event journal: take only lines with \`time ≥ fromTimeMs\`; human turns
   are \`message.part.updated\` with \`part.type = text\` whose
   \`part.messageID\` has \`info.role = user\` in \`message.updated\`;
-  parts sharing a \`part.id\` are one part (keep the latest).
+  parts sharing a \`part.id\` are one part (keep the latest). Count only
+  main-session lines: their \`sessionID\` is \`properties.session.id\` of a
+  \`runtime.ready\` event. Skip child (subagent) sessions — their user
+  turns are written by the agent. The human is a turn without an \`<iap>\`
+  wrapper (TUI) or an \`<iap from="<human>" …>\` envelope; envelopes from
+  agents are not human turns.
 
 Boundaries for every subagent: touch only the folder(s) named in the task,
 and only in-window notes; stay out of canon folders; no hard deletes (only

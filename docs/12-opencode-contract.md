@@ -80,7 +80,9 @@ per-personality journal `<IAPEER_ROOT>/peers/<p>/opencode/events.jsonl`
 (iapeer `docs/20-opencode.md`: the core is its single producer; the native
 OpenCode SQLite is never read). The journal is never rotated, so the task
 carries `fromTimeMs` (window start) and the DreamWeaver judge reads only
-lines with `time ≥ fromTimeMs`. Scoping is by personality, so a shared cwd
+lines with `time ≥ fromTimeMs`, of main sessions only (the `session.id` of
+`runtime.ready` events; child/subagent sessions share the journal but their
+user turns are agent-written), upserting streamed parts by `part.id`. Scoping is by personality, so a shared cwd
 does not leak another peer's sessions. Until the core's journal producer
 ships, an OpenCode-only peer simply contributes no transcripts — the runtime
 is still listed in the task, so the gap is visible, not silent.
