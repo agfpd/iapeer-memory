@@ -292,7 +292,8 @@ wastes the whole point).
   \`part.messageID\` has \`info.role = user\` in \`message.updated\`;
   parts sharing a \`part.id\` are one part (keep the latest). Count only
   main-session lines: their \`sessionID\` is \`properties.session.id\` of a
-  \`runtime.ready\` event. Skip child (subagent) sessions — their user
+  \`runtime.ready\` event anywhere in the file, not only in the window (a
+  process may live all week). Skip child (subagent) sessions — their user
   turns are written by the agent. The human is a turn without an \`<iap>\`
   wrapper (TUI) or an \`<iap from="<human>" …>\` envelope; envelopes from
   agents are not human turns.
