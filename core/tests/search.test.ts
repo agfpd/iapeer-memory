@@ -99,6 +99,26 @@ describe("runVaultSearch — BM25-only", () => {
     expect(out.results).toEqual([]);
   });
 
+  it("multi-word query with no all-token match falls back to any-token recall", async () => {
+    addDoc(db, "a.md", "Flags", "needs_review is cleared by the curator");
+    addDoc(db, "b.md", "Berry", "blackberry");
+    const out = await runVaultSearch({
+      db, config: makeConfig(), query: "needs_review снятие флага",
+    });
+    expect(out.results.map((r) => r.path)).toContain("a.md");
+    expect(out.results.map((r) => r.path)).not.toContain("b.md");
+    expect(out.pipeline.bm25).toBe("or-fallback");
+  });
+
+  it("all-token match keeps AND precision (no fallback)", async () => {
+    addDoc(db, "a.md", "Both", "apple banana");
+    addDoc(db, "b.md", "One", "apple only");
+    const out = await runVaultSearch({ db, config: makeConfig(), query: "apple banana" });
+    expect(out.results.map((r) => r.path)).toContain("a.md");
+    expect(out.results.map((r) => r.path)).not.toContain("b.md");
+    expect(out.pipeline.bm25).toBe("ok");
+  });
+
   it("snippet has BM25 highlight when BM25 matched", async () => {
     addDoc(db, "a.md", "Apple", "the apple is red");
     const out = await runVaultSearch({

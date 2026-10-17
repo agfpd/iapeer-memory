@@ -36,7 +36,10 @@ import { agentMemoryFolderMarker, statusGroup } from "./taxonomy.js";
  * - `graph`: всегда "ok" (1-hop expand чисто на SQLite).
  */
 export type PipelineStatus = {
-  bm25: "ok";
+  /** "or-fallback": the all-tokens (AND) query matched nothing, so any-token
+   *  (OR) recall was used — otherwise a multi-word query without the
+   *  semantic leg (embedding down) degrades to zero results. */
+  bm25: "ok" | "or-fallback";
   embedding: EmbeddingStatus | "disabled";
   reranker: RerankerStatus | "disabled" | "skipped";
   graph: "ok";
@@ -136,9 +139,13 @@ export async function runVaultSearch(params: {
 
   // --- Step 1: BM25 ---
   const ftsQuery = escapeFtsQuery(query);
-  const bm25Results = ftsQuery
+  let bm25Results = ftsQuery
     ? searchDocuments(db, { query: ftsQuery, limit: candidateLimit })
     : [];
+  if (bm25Results.length === 0 && queryTokens(query).length > 1) {
+    bm25Results = searchDocuments(db, { query: escapeFtsQuery(query, "or"), limit: candidateLimit });
+    if (bm25Results.length > 0) pipeline.bm25 = "or-fallback";
+  }
   const t1 = Date.now();
 
   // --- Step 2: Vector search ---

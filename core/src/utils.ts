@@ -70,8 +70,14 @@ export function queryTokens(query: string): string[] {
     .filter((token) => /[\p{L}\p{N}]/u.test(token));
 }
 
-export function escapeFtsQuery(query: string): string {
+/**
+ * FTS5 MATCH expression. `and` (default): space-joined phrases — FTS5's
+ * implicit AND, every token must match. `or`: the recall fallback the search
+ * pipeline uses when AND finds nothing; bm25 still ranks documents matching
+ * more tokens higher.
+ */
+export function escapeFtsQuery(query: string, mode: "and" | "or" = "and"): string {
   return queryTokens(query)
     .map((token) => `"${token}"*`)
-    .join(" ");
+    .join(mode === "or" ? " OR " : " ");
 }

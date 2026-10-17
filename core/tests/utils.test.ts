@@ -106,8 +106,12 @@ describe("escapeFtsQuery", () => {
     expect(escapeFtsQuery("foo")).toBe('"foo"*');
   });
 
-  it("splits on whitespace and ORs tokens by space", () => {
+  it("splits on whitespace; space-join = FTS5 implicit AND", () => {
     expect(escapeFtsQuery("foo bar")).toBe('"foo"* "bar"*');
+  });
+
+  it("or mode joins tokens with explicit OR", () => {
+    expect(escapeFtsQuery("foo bar", "or")).toBe('"foo"* OR "bar"*');
   });
 
   it("strips FTS5 metacharacters", () => {
