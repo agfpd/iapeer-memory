@@ -44,3 +44,26 @@ describe("candidate validation before binary activation", () => {
     });
   }
 });
+
+describe("sandboxed install-binary never targets the live binary", () => {
+  it("default out path under ~/.local/bin is refused before any compile (incident 17.10)", () => {
+    const prev = process.env.IAPEER_TEST_SANDBOX;
+    process.env.IAPEER_TEST_SANDBOX = "1";
+    const calls: string[][] = [];
+    const eg = {
+      refused: true,
+      spawnSync(argv: string[]) { calls.push(argv); return { exitCode: 0, stdout: "", stderr: "" }; },
+      spawnDetached: () => ({ started: false, detail: "" }),
+      kill: () => ({ delivered: false }),
+      fetch: () => Promise.reject(new Error("no")),
+    } as unknown as Egress;
+    try {
+      const outcome = installBinary(eg, { outPath: path.join(os.homedir(), ".local", "bin", "iapeer-memory") });
+      expect(outcome.action).toBe("failed");
+      expect((outcome as { detail?: string }).detail).toMatch(/fs-guard/);
+      expect(calls).toEqual([]);
+    } finally {
+      if (prev === undefined) delete process.env.IAPEER_TEST_SANDBOX; else process.env.IAPEER_TEST_SANDBOX = prev;
+    }
+  });
+});

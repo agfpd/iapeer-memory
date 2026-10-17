@@ -48,7 +48,11 @@ export function installBinary(
   }
   // The compiler and codesign are external writers: assert BEFORE spawning,
   // not merely at rename (which would be too late for a sandbox leak).
-  assertSandboxWritablePath(outPath, "install-binary");
+  try {
+    assertSandboxWritablePath(outPath, "install-binary");
+  } catch (err) {
+    return { action: "failed", outPath, detail: `${(err as Error).message} — previous installation unchanged` };
+  }
 
   const cliPath = new URL("./cli.ts", import.meta.url).pathname;
   fs.mkdirSync(path.dirname(outPath), { recursive: true });

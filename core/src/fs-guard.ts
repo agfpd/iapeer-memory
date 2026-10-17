@@ -48,6 +48,10 @@ function prodAnchors(): string[] {
     path.join(home, ".codex"),
     path.join(home, ".config", "opencode"),
     path.join(home, "Library", "Mobile Documents"),
+    // Stable installed binaries (iapeer-memory, iapeer, claude…). Incident
+    // 17.10.2026: a sandboxed install-binary whose env ladder collapsed fell
+    // back to the default out path and replaced the live CLI.
+    path.join(home, ".local", "bin"),
   ];
 }
 
@@ -129,7 +133,7 @@ export function assertSandboxWritablePath(filePath: string, op: string): void {
   if (isUnderProdAnchor(filePath)) {
     throw new Error(
       `fs-guard: ${op} refused under the test sandbox — "${filePath}" is under a production anchor ` +
-        "(~/.iapeer, ~/.claude, ~/.codex or the iCloud root). A test must write " +
+        "(~/.iapeer, ~/.claude, ~/.codex, ~/.config/opencode, ~/.local/bin or the iCloud root). A test must write " +
         "inside its own tmp root; if the path came from the env ladder, the ladder drifted.",
     );
   }

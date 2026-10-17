@@ -25,6 +25,8 @@ describe("isUnderProdAnchor — the predicate (checkable without arming a write)
     expect(isUnderProdAnchor(path.join(home, ".claude", "settings.json"))).toBe(true);
     expect(isUnderProdAnchor(path.join(home, ".codex", "config.toml"))).toBe(true);
     expect(isUnderProdAnchor(path.join(home, ".config", "opencode", "opencode.json"))).toBe(true);
+    expect(isUnderProdAnchor(path.join(home, ".local", "bin", "iapeer-memory"))).toBe(true);
+    expect(isUnderProdAnchor(path.join(home, ".local", "share", "x"))).toBe(false);
     expect(
       isUnderProdAnchor(path.join(home, "Library", "Mobile Documents", "vault", "note.md")),
     ).toBe(true);
