@@ -1,0 +1,142 @@
+name: Publish
+
+# Publishes @agfpd/iapeer-memory-core and @agfpd/iapeer-memory (one version,
+# lockstep) to npm via trusted publishing (OIDC) — no stored token, no OTP, no
+# browser. The npmjs.com trusted-publisher config of BOTH packages must name
+# this file: agfpd / iapeer-memory / publish.yml.
+#
+# EXACT-BYTES INVARIANT: the registry receives exactly the archives the PM
+# accepted, never a CI rebuild. The bytes come from the GitHub Release assets
+# of the tag (agfpd-iapeer-memory-core-<version>.tgz and
+# agfpd-iapeer-memory-<version>.tgz) and must hash to the `core_sha256` /
+# `facade_sha256` inputs — the PM's acceptance hashes. Any mismatch fails the
+# run before the first `npm publish`. Hence dispatch-only: a bare tag push
+# carries no accepted hash.
+#
+# Order: core first — the facade pins the exact core version, so a facade
+# without its core in the registry would be uninstallable. Both archives are
+# verified before either is published; a registry failure between the two
+# publishes leaves core published alone, and a re-dispatch skips an already
+# published core whose registry integrity equals the accepted archive.
+#
+# Dispatch from main (`gh workflow run publish.yml --ref main -f tag=… -f
+# core_sha256=… -f facade_sha256=…`): the workflow file is main's, the tag is
+# checked out for the test gate. The OIDC claim names this file, which is what
+# the trusted-publisher config matches.
+#
+# Provenance needs `repository.url` == this repo in each archive's package.json
+# (with `directory` for the monorepo subfolder). An archive without it is
+# published with provenance OFF rather than rebuilt.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing version tag whose Release assets are published (e.g. v0.4.24)'
+        required: true
+      core_sha256:
+        description: 'SHA-256 of the PM-accepted core archive (64 hex)'
+        required: true
+      facade_sha256:
+        description: 'SHA-256 of the PM-accepted facade archive (64 hex)'
+        required: true
+
+permissions:
+  id-token: write # OIDC for npm trusted publishing
+  contents: read # checkout + release asset download
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: macos-latest
+    env:
+      TAG: ${{ inputs.tag }}
+      CORE_SHA256: ${{ inputs.core_sha256 }}
+      FACADE_SHA256: ${{ inputs.facade_sha256 }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Validate inputs
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad tag: $TAG" >&2; exit 1; }
+          for h in "$CORE_SHA256" "$FACADE_SHA256"; do
+            [[ "$h" =~ ^[0-9a-f]{64}$ ]] || { echo "sha256 must be 64 lowercase hex" >&2; exit 1; }
+          done
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false # never cache in release builds
+      - run: npm install -g npm@latest # trusted publishing needs npm >= 11.5.1
+      - name: Tag matches both manifests and the exact core pin
+        run: |
+          fv="$(node -p "require('./package/package.json').version")"
+          cv="$(node -p "require('./core/package.json').version")"
+          pin="$(node -p "require('./package/package.json').dependencies['@agfpd/iapeer-memory-core']")"
+          [ "$TAG" = "v$fv" ] || { echo "tag $TAG != facade $fv" >&2; exit 1; }
+          [ "$fv" = "$cv" ] || { echo "facade $fv != core $cv" >&2; exit 1; }
+          [ "$pin" = "$fv" ] || { echo "facade pins core '$pin', expected exact $fv" >&2; exit 1; }
+      - name: Test gate on the tagged source
+        run: |
+          bun install --frozen-lockfile
+          bun run test
+          bun run typecheck
+      - name: Fetch both accepted archives and verify their bytes
+        run: |
+          ver="${TAG#v}"
+          dir="$RUNNER_TEMP/release"
+          mkdir -p "$dir"
+          verify() { # <asset> <want-sha256> <want-name> <ENVPREFIX>
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$1" --dir "$dir"
+            tgz="$dir/$1"
+            got="$(shasum -a 256 "$tgz" | cut -d' ' -f1)"
+            echo "$1 sha256: $got"
+            [ "$got" = "$2" ] || { echo "$1 sha256 $got != accepted $2 — refusing to publish" >&2; exit 1; }
+            meta="$(tar -xzOf "$tgz" package/package.json)"
+            name="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).name)' "$meta")"
+            pver="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).version)' "$meta")"
+            repo="$(node -e 'const r=JSON.parse(process.argv[1]).repository;process.stdout.write(typeof r==="string"?r:(r&&r.url)||"")' "$meta")"
+            [ "$name" = "$3" ] || { echo "$1: archive name $name != $3" >&2; exit 1; }
+            [ "v$pver" = "$TAG" ] || { echo "$1: archive version $pver != $TAG" >&2; exit 1; }
+            if [ "$repo" = "git+https://github.com/${GITHUB_REPOSITORY}.git" ]; then prov=true; else prov=false; fi
+            echo "$1: repository.url '${repo}' → provenance=$prov"
+            echo "${4}_TGZ=$tgz" >> "$GITHUB_ENV"
+            echo "${4}_PROV=$prov" >> "$GITHUB_ENV"
+            echo "${4}_INTEGRITY=sha512-$(openssl dgst -sha512 -binary "$tgz" | base64 | tr -d '\n')" >> "$GITHUB_ENV"
+          }
+          verify "agfpd-iapeer-memory-core-${ver}.tgz" "$CORE_SHA256" "@agfpd/iapeer-memory-core" CORE
+          verify "agfpd-iapeer-memory-${ver}.tgz" "$FACADE_SHA256" "@agfpd/iapeer-memory" FACADE
+          echo "VER=$ver" >> "$GITHUB_ENV"
+      - name: Publish core, then facade (exact archives)
+        run: |
+          publish() { # <name> <tgz> <provenance> <want-integrity>
+            have="$(npm view "$1@$VER" dist.integrity 2>/dev/null || true)"
+            if [ -n "$have" ]; then
+              [ "$have" = "$4" ] || { echo "$1@$VER already in the registry with different bytes" >&2; exit 1; }
+              echo "$1@$VER already published with the accepted bytes — skipping"
+              return
+            fi
+            NPM_CONFIG_PROVENANCE="$3" npm publish "$2" --access public
+          }
+          publish "@agfpd/iapeer-memory-core" "$CORE_TGZ" "$CORE_PROV" "$CORE_INTEGRITY"
+          publish "@agfpd/iapeer-memory" "$FACADE_TGZ" "$FACADE_PROV" "$FACADE_INTEGRITY"
+      - name: Registry integrity equals the accepted archives
+        run: |
+          check() { # <name> <want-integrity>
+            got=""
+            for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              got="$(npm view "$1@$VER" dist.integrity 2>/dev/null || true)"
+              [ -n "$got" ] && break
+              sleep 10
+            done
+            echo "$1 registry integrity: $got"
+            [ "$got" = "$2" ] || { echo "$1 registry integrity mismatch (accepted $2)" >&2; exit 1; }
+          }
+          check "@agfpd/iapeer-memory-core" "$CORE_INTEGRITY"
+          check "@agfpd/iapeer-memory" "$FACADE_INTEGRITY"

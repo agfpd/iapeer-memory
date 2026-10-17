@@ -3,6 +3,11 @@
   "version": "0.4.23",
   "description": "iapeer-memory — peer memory for the iapeer ecosystem: vault, memoryd (index/search/MCP over HTTP), context fragments, role doctrines. The package IS the system; session surfaces are direct per-peer files merged into each peer's cwd. See docs/README.md.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agfpd/iapeer-memory.git",
+    "directory": "package"
+  },
   "type": "module",
   "bin": {
     "iapeer-memory": "bin/iapeer-memory"
