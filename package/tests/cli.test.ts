@@ -490,7 +490,7 @@ describe("search pipeline visibility (acceptance condition: degradation is never
 });
 
 describe("install-binary command", () => {
-  it("compiles a working standalone binary to --out", () => {
+  it("compiles a working standalone binary to --out", async () => {
     const out = path.join(tmp, "bin", "iapeer-memory");
     const r = runCli(["install-binary", "--out", out]);
     expect(r.exitCode).toBe(0);
@@ -506,6 +506,10 @@ describe("install-binary command", () => {
     expect(provision.exitCode).toBe(0);
     const plugin = path.join(tmp, "iapeer-root", "state", "opencode", "compiled-test", "iapeer-memory-plugin.mjs");
     expect(fs.readFileSync(plugin, "utf-8")).toContain("export default");
+    // The compiled binary must materialise the SAME bytes as the source run
+    // (provision by one, check by the other — the 0.4.24 drift flap).
+    const { openCodePluginSource } = await import("../src/surfaces/opencode-plugin.js");
+    expect(fs.readFileSync(plugin, "utf-8")).toBe(openCodePluginSource(out));
   }, 30_000);
 });
 
