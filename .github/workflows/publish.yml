@@ -130,7 +130,10 @@ jobs:
         run: |
           check() { # <name> <want-integrity>
             got=""
-            for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            # npm can take several minutes to serve a fresh version ("Your
+            # package is being processed"): 0.4.24's facade appeared after the
+            # old 2-minute window and failed a correct publish. Poll 10 min.
+            for i in $(seq 1 60); do
               got="$(npm view "$1@$VER" dist.integrity 2>/dev/null || true)"
               [ -n "$got" ] && break
               sleep 10
