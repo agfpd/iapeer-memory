@@ -210,3 +210,55 @@ export function queryPrivateDir(
   }
   return { dir };
 }
+
+/**
+ * Single-entry fleet-map edit for the slot verbs (birth / remove). memoryd
+ * re-renders per-peer fragments on a fleet.json mtime change — and birth did
+ * not touch the map (only init/update/verify --repair re-wrote it), so a
+ * peer born after memoryd's start got NO fragment/index until the next
+ * update (OC09, 18.10.2026; any runtime). `add` merges the runtime into the
+ * entry (creating it, or the map); `remove` drops the runtime and the entry
+ * once it has none. No-op when nothing changes (no mtime churn → no
+ * re-render storm). A present-but-unreadable map is never clobbered.
+ */
+export function editFleetEntry(
+  fleetMapPath: string,
+  op: "add" | "remove",
+  peer: { personality: string; cwd: string; runtime: string },
+): { action: "written" | "unchanged" | "skipped"; detail: string } {
+  if (sandboxBlocksProdRead(fleetMapPath)) {
+    return { action: "skipped", detail: "live fleet map not touched under the test sandbox" };
+  }
+  let doc: { updatedAt?: string; peers: Array<Record<string, unknown>> };
+  if (fs.existsSync(fleetMapPath)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(fleetMapPath, "utf-8"));
+      if (!raw || !Array.isArray(raw.peers)) throw new Error("no peers array");
+      doc = raw;
+    } catch (err) {
+      return { action: "skipped", detail: `fleet map unreadable (${String(err)}) — not clobbered; repair: iapeer-memory verify --repair` };
+    }
+  } else {
+    if (op === "remove") return { action: "unchanged", detail: "no fleet map" };
+    doc = { peers: [] };
+  }
+  const before = JSON.stringify(doc.peers);
+  const idx = doc.peers.findIndex((p) => p.personality === peer.personality);
+  if (op === "add") {
+    const prev = idx >= 0 ? doc.peers[idx]! : null;
+    const runtimes = Array.isArray(prev?.runtimes) ? (prev!.runtimes as unknown[]).filter((r): r is string => typeof r === "string") : [];
+    const entry = { ...(prev ?? {}), personality: peer.personality, cwd: peer.cwd, runtimes: runtimes.includes(peer.runtime) ? runtimes : [...runtimes, peer.runtime] };
+    if (idx >= 0) doc.peers[idx] = entry; else doc.peers.push(entry);
+  } else if (idx >= 0) {
+    const prev = doc.peers[idx]!;
+    const runtimes = (Array.isArray(prev.runtimes) ? (prev.runtimes as unknown[]) : []).filter((r) => r !== peer.runtime);
+    if (runtimes.length) doc.peers[idx] = { ...prev, runtimes }; else doc.peers.splice(idx, 1);
+  }
+  if (JSON.stringify(doc.peers) === before) return { action: "unchanged", detail: "fleet map already current" };
+  doc.updatedAt = new Date().toISOString();
+  fs.mkdirSync(path.dirname(fleetMapPath), { recursive: true });
+  const tmp = `${fleetMapPath}.${crypto.randomBytes(6).toString("hex")}.tmp`;
+  guardedWriteFileSync(tmp, JSON.stringify(doc, null, 2) + "\n", "utf-8");
+  guardedRenameSync(tmp, fleetMapPath);
+  return { action: "written", detail: `${op} ${peer.personality}:${peer.runtime} → ${fleetMapPath}` };
+}

@@ -94,8 +94,15 @@ describe("runtime-private OpenCode surfaces", () => {
       expect(fs.existsSync(path.join(priv, "iapeer-memory.json"))).toBe(true);
       expect(fs.existsSync(path.join(priv, "iapeer-memory-plugin.mjs"))).toBe(true);
       expect(fs.existsSync(path.join(tmp, "state", "opencode", "same-peer"))).toBe(false);
-      expect(cmdUnprovisionPeer(args, liveEgress())).toBe(0);
+      // birth lands the peer in the fleet map (memoryd renders on its mtime)
+      const map = JSON.parse(fs.readFileSync(path.join(tmp, "state", "iapeer-memory", "fleet.json"), "utf-8"));
+      expect(map.peers).toEqual([{ personality: "same-peer", cwd: tmp, runtimes: ["opencode"] }]);
+      expect(cmdUnprovisionPeer(args, liveEgress())).toBe(0); // off-peer: entry stays
+      expect(JSON.parse(fs.readFileSync(path.join(tmp, "state", "iapeer-memory", "fleet.json"), "utf-8")).peers).toHaveLength(1);
       expect(fs.existsSync(path.join(priv, "iapeer-memory.json"))).toBe(false);
+      expect(cmdProvisionPeer(args, liveEgress())).toBe(0);
+      expect(cmdUnprovisionPeer([...args, "--occasion", "remove"], liveEgress())).toBe(0);
+      expect(JSON.parse(fs.readFileSync(path.join(tmp, "state", "iapeer-memory", "fleet.json"), "utf-8")).peers).toEqual([]);
       process.env.IAPEER_PRIVATE_DIR = "relative/dir";
       expect(cmdProvisionPeer(args, liveEgress())).toBe(1);
     } finally {

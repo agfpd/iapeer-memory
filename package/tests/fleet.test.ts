@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { readFleetMap, writeFleetMap, queryPrivateDir } from "../src/fleet.js";
+import { readFleetMap, writeFleetMap, queryPrivateDir, editFleetEntry } from "../src/fleet.js";
 import type { Egress } from "../src/egress.js";
 import { liveEgress } from "../src/egress.js";
 
@@ -121,5 +121,36 @@ describe("queryPrivateDir — the core answers, the product never derives", () =
     ]) {
       expect("error" in queryPrivateDir(eg(r), "p")).toBe(true);
     }
+  });
+});
+
+describe("editFleetEntry — birth/remove land in the fleet map (memoryd renders on its mtime)", () => {
+  let dir: string;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "im-fleet-edit-")); });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it("add creates the map, merges runtimes, is a no-op when current; remove drops runtime then entry", () => {
+    const map = path.join(dir, "state", "fleet.json");
+    expect(editFleetEntry(map, "add", { personality: "nu", cwd: "/c/nu", runtime: "opencode" }).action).toBe("written");
+    expect(readFleetMap(map)).toEqual([{ personality: "nu", cwd: "/c/nu", runtimes: ["opencode"] }]);
+    const m1 = fs.statSync(map).mtimeMs;
+    expect(editFleetEntry(map, "add", { personality: "nu", cwd: "/c/nu", runtime: "opencode" }).action).toBe("unchanged");
+    expect(fs.statSync(map).mtimeMs).toBe(m1);
+    editFleetEntry(map, "add", { personality: "nu", cwd: "/c/nu", runtime: "claude" });
+    expect(readFleetMap(map)![0]!.runtimes).toEqual(["opencode", "claude"]);
+    editFleetEntry(map, "remove", { personality: "nu", cwd: "/c/nu", runtime: "opencode" });
+    expect(readFleetMap(map)![0]!.runtimes).toEqual(["claude"]);
+    editFleetEntry(map, "remove", { personality: "nu", cwd: "/c/nu", runtime: "claude" });
+    expect(readFleetMap(map)).toEqual([]);
+  });
+
+  it("keeps other peers and never clobbers an unreadable map", () => {
+    const map = path.join(dir, "fleet.json");
+    fs.writeFileSync(map, JSON.stringify({ updatedAt: "x", peers: [{ personality: "old", cwd: "/c/old", runtimes: ["codex"] }] }));
+    editFleetEntry(map, "add", { personality: "nu", cwd: "/c/nu", runtime: "claude" });
+    expect(readFleetMap(map)!.map((p) => p.personality)).toEqual(["old", "nu"]);
+    fs.writeFileSync(map, "{");
+    expect(editFleetEntry(map, "add", { personality: "x", cwd: "/c", runtime: "claude" }).action).toBe("skipped");
+    expect(fs.readFileSync(map, "utf-8")).toBe("{");
   });
 });

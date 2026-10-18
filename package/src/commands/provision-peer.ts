@@ -24,7 +24,7 @@
  * not delivered — P5 §4.2). Exit: 0 ok, 1 a surface failed, 2 usage.
  */
 
-import { queryPrivateDir } from "../fleet.js";
+import { editFleetEntry, queryPrivateDir } from "../fleet.js";
 import fs from "node:fs";
 import type { Egress } from "../egress.js";
 import { memoryPaths } from "../paths.js";
@@ -75,6 +75,16 @@ function resolvePrivateDir(verb: string, flags: Flags, egress: Egress): string |
   if ("dir" in q) return q.dir;
   console.error(`iapeer-memory ${verb}: ${q.error}`);
   return null;
+}
+
+function syncFleetEntry(verb: string, op: "add" | "remove", flags: Flags, fleetMapPath: string): void {
+  if (!flags.personality) {
+    console.log(`${verb}: fleet map not updated — no --personality (the core passes it; manual runs: add --personality)`);
+    return;
+  }
+  const r = editFleetEntry(fleetMapPath, op, { personality: flags.personality, cwd: flags.cwd, runtime: flags.runtime });
+  if (r.action === "written") console.log(`${verb}: fleet map ${r.detail} — memoryd renders the fragment on its next tick`);
+  else if (r.action === "skipped") console.error(`${verb}: fleet map ${r.detail}`);
 }
 
 function parseFlags(
@@ -188,7 +198,12 @@ export function cmdProvisionPeer(argv: string[], egress: Egress): number {
     console.error(`iapeer-memory provision-peer: ${locked.detail}`);
     return 1;
   }
-  return report("provision-peer", flags, locked.result);
+  const rc = report("provision-peer", flags, locked.result);
+  // Land the peer in the fleet map so memoryd renders its fragment/index now
+  // (fleet-map-change tick), not at the next update. Surfaces failed → the
+  // peer is not wired; leave the map alone.
+  if (rc === 0) syncFleetEntry("provision-peer", "add", flags, paths.fleetMapPath);
+  return rc;
 }
 
 export function cmdUnprovisionPeer(argv: string[], egress: Egress): number {
@@ -214,5 +229,9 @@ export function cmdUnprovisionPeer(argv: string[], egress: Egress): number {
     console.error(`iapeer-memory unprovision-peer: ${locked.detail}`);
     return 1;
   }
-  return report("unprovision-peer", flags, locked.result);
+  const rc = report("unprovision-peer", flags, locked.result);
+  // Only peer REMOVAL leaves the fleet; memory switched off for a peer that
+  // still exists (off-peer/off-all) keeps its map entry.
+  if (rc === 0 && flags.occasion === "remove") syncFleetEntry("unprovision-peer", "remove", flags, paths.fleetMapPath);
+  return rc;
 }
