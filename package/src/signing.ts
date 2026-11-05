@@ -124,8 +124,8 @@ function createIdentity(run: SigningRunner): { ok: boolean; detail?: string } {
 }
 
 /**
- * Re-sign the installed binary with the stable local identity (creating it
- * on first use). Called by installBinary after the atomic rename — every
+ * Sign the candidate binary with the stable local identity (creating it
+ * on first use). Called by installBinary before validation and atomic rename — every
  * install/update path — so the designated requirement (and every TCC
  * grant) stays constant while the bytes change.
  */
