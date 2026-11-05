@@ -38,7 +38,7 @@ import { installBinary } from "../binary.js";
 import { IAPEER_BIN, type Egress } from "../egress.js";
 import { memoryPaths } from "../paths.js";
 import { provisionVault, writeDefaultConfig } from "../provision.js";
-import { writeRolesManifest, type RoleEntry } from "../roles.js";
+import { readRolesManifest, writeRolesManifest, type RoleEntry } from "../roles.js";
 import { readSlot, writeSlot, SLOT_PROVIDER } from "../slot.js";
 import { readFleetMap, writeFleetMap } from "../fleet.js";
 import { withProvisionLock, pidAliveProbe } from "../surfaces/lock.js";
@@ -561,6 +561,7 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
     } else {
       writeLauncherScript({ launcherPath: paths.launcherPath, binaryPath: paths.binaryPath });
       const sent = registerWatcher(egress, {
+        registrantCwd: readRolesManifest(paths.rolesManifestPath)?.roles.find((r) => r.role === "index")?.peerCwd,
         launcherPath: paths.launcherPath,
         target: plan.eventTarget ?? undefined, // null (full-lean) → default placeholder; memoryd emits nothing
         runtime: registrationRuntime,
@@ -582,6 +583,7 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
           binaryPath: paths.binaryPath,
         });
         const dream = registerTimer(egress, {
+          registrantCwd: readRolesManifest(paths.rolesManifestPath)?.roles.find((r) => r.role === "index")?.peerCwd,
           message: dreamTimerMessage({
             cron: process.env.IAPEER_MEMORY_DREAM_CRON,
             dreamGateScriptPath: paths.dreamGateScriptPath,

@@ -11,6 +11,8 @@ import {
   patchWakePolicyEphemeral,
   readWatcherTrigger,
   registerWatcher,
+  registerTimer,
+  unregisterTimer,
   registrationMessage,
   resolveRegistrantRuntime,
   unregisterWatcher,
@@ -19,6 +21,39 @@ import {
 } from "../src/watcher.js";
 
 let tmp: string;
+
+describe("durable trigger reconciliation", () => {
+  function profile(triggers: unknown[]) {
+    fs.mkdirSync(path.join(tmp, ".iapeer"), { recursive: true });
+    fs.writeFileSync(path.join(tmp, ".iapeer", "peer-profile.json"), JSON.stringify({ notifier: { triggers } }));
+  }
+  // Refusing egress turns an accidental send into a visible failure, without
+  // ever contacting the host-global notifier sockets.
+  it("identical watcher and absent timer do not send", () => {
+    profile([{ role: "event", id: WATCHER_TRIGGER_ID, owner: "index", script: "/launcher", target: "scriber" }]);
+    expect(registerWatcher(liveEgress(), { runtime: "codex", launcherPath: "/launcher", registrantCwd: tmp }).detail).toContain("no send");
+    expect(unregisterTimer(liveEgress(), { runtime: "codex", id: DREAM_TRIGGER_ID, registrantCwd: tmp }).detail).toContain("no send");
+  });
+  it("watcher drift, foreign owner and unreadable state still send", () => {
+    for (const drift of [{ script: "/old" }, { target: "index" }, { heartbeatSec: 10 }, { owner: "other" }]) {
+      profile([{ role: "event", id: WATCHER_TRIGGER_ID, owner: "index", script: "/launcher", target: "scriber", ...drift }]);
+      expect(registerWatcher(liveEgress(), { runtime: "codex", launcherPath: "/launcher", registrantCwd: tmp }).suppressed).toBe(true);
+    }
+    fs.writeFileSync(path.join(tmp, ".iapeer", "peer-profile.json"), "broken");
+    expect(unregisterTimer(liveEgress(), { runtime: "codex", id: DREAM_TRIGGER_ID, registrantCwd: tmp }).suppressed).toBe(true);
+  });
+  it("timer compares schedule, target, payload, gate and topic", () => {
+    const message = dreamTimerMessage({ dreamGateScriptPath: "/gate" });
+    const desired = { ...JSON.parse(message), role: "time", owner: "index" };
+    profile([desired]);
+    expect(registerTimer(liveEgress(), { runtime: "codex", message, registrantCwd: tmp }).detail).toContain("no send");
+    for (const drift of [{ when: "0 5 * * 1" }, { target: "index" }, { message: "old" }, { check: "/old" }, { topic: "old" }]) {
+      profile([{ ...desired, ...drift }]);
+      expect(registerTimer(liveEgress(), { runtime: "codex", message, registrantCwd: tmp }).suppressed).toBe(true);
+    }
+    expect(unregisterTimer(liveEgress(), { runtime: "codex", id: DREAM_TRIGGER_ID, registrantCwd: tmp }).suppressed).toBe(true);
+  });
+});
 
 beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "im-watch-"));

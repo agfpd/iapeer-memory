@@ -301,9 +301,20 @@ export function registerWatcher(
     target?: string;
     id?: string;
     iapeerBin?: string;
+    /** Read the durable declaration before sending: identical registration
+     *  wakes the owner and restarts the script needlessly. */
+    registrantCwd?: string;
   },
 ): IapSendResult {
   const registrant = opts.registrant ?? DEFAULT_REGISTRANT;
+  const current = opts.registrantCwd ? readWatcherTrigger({
+    registrantCwd: opts.registrantCwd, owner: registrant, id: opts.id,
+  }) : null;
+  if (current && current.script === opts.launcherPath &&
+      current.target === (opts.target ?? DEFAULT_EVENT_TARGET) &&
+      current.heartbeatSec == null) {
+    return { ok: true, detail: "identical durable watcher — no send" };
+  }
   return iapSend(egress, {
     fromIdentity: fromIdentity(registrant, opts.runtime),
     iapeerBin: opts.iapeerBin,
@@ -342,8 +353,17 @@ export function registerTimer(
     registrant?: string;
     runtime: string;
     iapeerBin?: string;
+    registrantCwd?: string;
   },
 ): IapSendResult {
+  const desired = JSON.parse(opts.message) as WatcherTrigger;
+  const current = opts.registrantCwd ? readWatcherTrigger({
+    registrantCwd: opts.registrantCwd, owner: opts.registrant ?? DEFAULT_REGISTRANT,
+    id: desired.id, role: "time",
+  }) : null;
+  if (current && ["when", "target", "message", "check", "topic"].every(
+    (key) => current[key as keyof WatcherTrigger] === desired[key as keyof WatcherTrigger],
+  )) return { ok: true, detail: "identical durable timer — no send" };
   return iapSend(egress, {
     to: "timer",
     fromIdentity: fromIdentity(opts.registrant ?? DEFAULT_REGISTRANT, opts.runtime),
@@ -359,8 +379,20 @@ export function unregisterTimer(
     registrant?: string;
     runtime: string;
     iapeerBin?: string;
+    registrantCwd?: string;
   },
 ): IapSendResult {
+  // Only trust a readable, structurally valid profile; a missing/unreadable
+  // file is not evidence that the live notifier has no trigger.
+  if (opts.registrantCwd) {
+    try {
+      const profile = JSON.parse(fs.readFileSync(path.join(opts.registrantCwd, ".iapeer", "peer-profile.json"), "utf-8"));
+      if (Array.isArray(profile.notifier?.triggers) && !readWatcherTrigger({
+        registrantCwd: opts.registrantCwd, id: opts.id,
+        owner: opts.registrant ?? DEFAULT_REGISTRANT, role: "time",
+      })) return { ok: true, detail: "timer already absent — no send" };
+    } catch { /* Cannot prove absence: send the idempotent removal. */ }
+  }
   return iapSend(egress, {
     to: "timer",
     fromIdentity: fromIdentity(opts.registrant ?? DEFAULT_REGISTRANT, opts.runtime),
@@ -380,6 +412,8 @@ export type WatcherTrigger = {
   check?: string;
   heartbeatSec?: number;
   topic?: string;
+  when?: string;
+  message?: string;
 };
 
 /**

@@ -97,6 +97,11 @@ IAPEER_MEMORY_MODE=curated
 
 After any of these changes, run `iapeer-memory verify --repair` so the `notifier` triggers fall in line with the new mode.
 
+`init` and `update` compare our durable trigger declarations before sending:
+an identical watcher/timer and an already-absent disabled timer need no IAP
+message. Drift is still reconciled; unreadable state does not count as proof
+of absence. This avoids unnecessary owner wakes and watcher-script restarts.
+
 ### Who counts as a curator
 
 | Variable | Default | Purpose |

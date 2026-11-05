@@ -311,6 +311,38 @@ describe("init (local half, sandboxed)", () => {
 });
 
 describe("update (ADR-010: every surface, sandboxed)", () => {
+  it("init and update do not resend matching durable triggers (no owner wake or script restart)", () => {
+    const vault = path.join(tmp, "vault");
+    const peerCwd = path.join(tmp, "peer-index");
+    fs.mkdirSync(path.join(peerCwd, ".iapeer"), { recursive: true });
+    const profilePath = path.join(peerCwd, ".iapeer", "peer-profile.json");
+    const profile = { notifier: { triggers: [{ role: "event", id: "iapeer-memory-memoryd", owner: "index", target: "scriber", script: path.join(tmp, "memoryd-launcher.sh") }] } };
+    fs.writeFileSync(profilePath, JSON.stringify(profile));
+    const rows = ["index", "scriber", "dreamweaver"].map((personality) => {
+      const cwd = personality === "index" ? peerCwd : path.join(tmp, personality);
+      if (personality !== "index") {
+        fs.mkdirSync(path.join(cwd, ".iapeer"), { recursive: true });
+        fs.writeFileSync(path.join(cwd, ".iapeer", "peer-profile.json"), "{}");
+      }
+      return { personality, cwd, description: personality, default_runtime: "codex", runtimes: [{ runtime: "codex" }] };
+    });
+    const capture = path.join(tmp, "calls");
+    const bin = path.join(tmp, "fake-iapeer");
+    fs.writeFileSync(bin, `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${capture}"\nif [ "$1" = "list" ]; then echo '${JSON.stringify(rows)}'; fi\nexit 0\n`);
+    fs.chmodSync(bin, 0o755);
+    const env = { IAPEER_MEMORY_VAULT_PATH: vault, IAPEER_MEMORY_LOCALE: "en", IAPEER_MEMORY_MODE: "curated", IAPEER_MEMORY_PROACTIVE_DREAMWEAVER: "off" };
+    const init = runCli(["init", "--vault", vault, "--locale", "en", "--skip-deps", "--skip-binary", "--iapeer-bin", bin], env);
+    expect({ code: init.exitCode, errors: init.stderr, failures: init.stdout.split("\n").filter((l) => l.includes("FAIL")) }).toEqual({ code: 0, errors: "", failures: [] });
+    expect(fs.readFileSync(capture, "utf-8")).not.toMatch(/^send /m);
+    fs.writeFileSync(capture, "");
+    const update = runCli(["update", "--skip-binary", "--iapeer-bin", bin], env);
+    expect(update.exitCode).toBe(0);
+    expect(fs.readFileSync(capture, "utf-8")).not.toMatch(/^send /m);
+    profile.notifier.triggers[0].target = "index";
+    fs.writeFileSync(profilePath, JSON.stringify(profile));
+    runCli(["update", "--skip-binary", "--iapeer-bin", bin], env);
+    expect(fs.readFileSync(capture, "utf-8")).toContain("send watcher");
+  });
   it("re-renders stale doctrines, re-declares the slot version; idempotent re-run", () => {
     const vault = path.join(tmp, "vault");
     expect(runCli(["init", "--vault", vault, "--locale", "en", ...LOCAL_FLAGS]).exitCode).toBe(0);

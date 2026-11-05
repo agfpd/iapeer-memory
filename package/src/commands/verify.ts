@@ -424,6 +424,8 @@ export function runVerify(egress: Egress, opts: VerifyOptions = {}): CheckResult
               ? `script is ${t.script}, expected ${paths.launcherPath}`
               : t.target !== expectedEventTarget
                 ? `target is ${t.target ?? "?"}, expected ${expectedEventTarget}`
+                : t.heartbeatSec != null
+                  ? "heartbeatSec must be absent (memoryd stdout is event-driven)"
                 : null,
           repairSend: () => {
             if (!registrationRuntime) {

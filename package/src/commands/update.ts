@@ -247,12 +247,8 @@ export function cmdUpdate(argv: string[], egress: Egress): number {
   step("launcher", writeLauncherScript({ launcherPath: paths.launcherPath, binaryPath: paths.binaryPath }));
 
   // 8b. notifier wiring — RECONCILE to the curation plan (lean §7). The
-  // WATCHER always re-registers (it launches memoryd; same-id = replace, and
-  // it re-targets old hosts). The legacy inbox-SWEEP timer is unconditionally
-  // UNREGISTERED — the inbox pipeline is gone, so a host provisioned before
-  // the direct-to-canon migration gets its stale sweep trigger cleaned out
-  // (idempotent: not-found is a soft no-op). The DREAM timer is registered
-  // when its role is proactive, UNREGISTERED otherwise.
+  // Matching durable declarations need no send: replacing them needlessly
+  // wakes the owner and restarts memoryd. Drift still reconciles normally.
   {
     const plan = curationPlan(resolveMode(process.env).roles);
     // The trigger owner identity's runtime is the index peer's DECLARED runtime
@@ -267,7 +263,9 @@ export function cmdUpdate(argv: string[], egress: Egress): number {
           "triggers reconcile once role peers exist",
       );
     } else {
+      const registrantCwd = manifest?.roles.find((r) => r.role === "index")?.peerCwd;
       const w = registerWatcher(egress, {
+        registrantCwd,
         launcherPath: paths.launcherPath,
         target: plan.eventTarget ?? undefined,
         runtime,
@@ -281,6 +279,7 @@ export function cmdUpdate(argv: string[], egress: Egress): number {
           binaryPath: paths.binaryPath,
         });
         d = registerTimer(egress, {
+          registrantCwd,
           message: dreamTimerMessage({
             cron: process.env.IAPEER_MEMORY_DREAM_CRON,
             dreamGateScriptPath: paths.dreamGateScriptPath,
@@ -289,7 +288,7 @@ export function cmdUpdate(argv: string[], egress: Egress): number {
           iapeerBin,
         });
       } else {
-        d = unregisterTimer(egress, { id: DREAM_TRIGGER_ID, runtime, iapeerBin });
+        d = unregisterTimer(egress, { id: DREAM_TRIGGER_ID, runtime, iapeerBin, registrantCwd });
       }
 
       const sandboxed = w.suppressed && d.suppressed;
