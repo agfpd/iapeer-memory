@@ -35,7 +35,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { patchPeerProfile } from "@agfpd/iapeer/peer-profile";
+import { patchPeerProfile } from "../vendor/peer-profile.js";
 import { IAPEER_BIN, type Egress } from "./egress.js";
 import { assertSandboxWritablePath, guardedWriteFileSync, guardedRenameSync } from "@agfpd/iapeer-memory-core";
 

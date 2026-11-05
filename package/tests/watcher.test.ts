@@ -185,6 +185,20 @@ describe("wake_policy patch (ephemeral scriber)", () => {
   it("keeps the memory sandbox belt around the external writer", () => {
     expect(() => patchWakePolicyEphemeral(path.join(os.homedir(), ".iapeer", "peers", "never-write"))).toThrow();
   });
+
+  it("persists protocol 1 and fails closed on an incompatible writer protocol", () => {
+    const dir = path.join(tmp, ".iapeer");
+    expect(patchWakePolicyEphemeral(tmp)).toBe("written");
+    const protocol = path.join(dir, ".peer-profile.protocol");
+    expect(fs.readFileSync(protocol, "utf8")).toBe("1\n");
+    const file = path.join(dir, "peer-profile.json");
+    const bytes = fs.readFileSync(file, "utf8");
+    fs.writeFileSync(protocol, "2\n");
+    expect(() => patchWakePolicyEphemeral(tmp)).toThrow("protocol mismatch");
+    expect(fs.readFileSync(file, "utf8")).toBe(bytes);
+    expect(fs.readFileSync(protocol, "utf8")).toBe("2\n");
+    expect(fs.existsSync(path.join(dir, ".peer-profile.lock"))).toBe(false);
+  });
 });
 
 describe("iapeer send identity (e2e §A defect: bare personality is rejected)", () => {

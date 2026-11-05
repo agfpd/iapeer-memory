@@ -30,8 +30,8 @@ iapeer-memory uses the core's ready-made mechanisms wherever they exist:
 ## Cooperative profile writes
 
 `init` and `update` set curator `wake_policy` to `ephemeral` through the
-foundation's `patchPeerProfile` API (`@agfpd/iapeer/peer-profile`, the lightweight
-export). The latest profile is read inside the shared
+foundation's `patchPeerProfile` API (a generated standalone bundle of the
+lightweight `/peer-profile` source). The latest profile is read inside the shared
 `<cwd>/.iapeer/.peer-profile.lock`; only `wake_policy` is changed. Missing
 profiles start empty, unchanged profiles are not rewritten, and malformed JSON,
 filesystem errors or a two-second lock timeout fail the command without an
@@ -42,11 +42,18 @@ does not write peer profiles. Migration still requires a coordinated window
 for **all ecosystem writers**, because an older unlocked writer can overwrite
 a locked patch. Release and restart coordination belongs to the host operator.
 
+The runtime ships only `vendor/peer-profile.js` and its declaration; foundation
+is a development-only source dependency. `bun run vendor:peer-profile` in
+`package/` regenerates the bundle and provenance (upstream commit, protocol,
+Bun version and SHA256); CI regenerates and compares both using Bun 1.3.13.
+The persistent `.iapeer/.peer-profile.protocol` marker is checked inside the
+lock; a protocol mismatch fails closed. The current protocol is 1.
+
 The migration branch temporarily pins foundation commit
-`95a08490f8f868ce39c0f89413e1ca75fb63ee24` for CI while its npm candidate is
-unpublished. This is **not a releasable dependency**: before producing a release
-archive, replace it with exact registry version `0.4.165` after core publication
-and rerun the test/typecheck gate.
+`829c2e736a318d343bd7b6b45c0e073026b9e62a` for CI while its npm candidate is
+unpublished. Before producing a release archive, replace the devDependency
+with exact registry version `0.4.165` after core publication, regenerate the
+vendor bundle/provenance and rerun the test/typecheck gate.
 
 ## Distribution and session surfaces
 
