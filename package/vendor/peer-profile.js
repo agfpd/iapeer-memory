@@ -1,9 +1,9 @@
 // @bun
-// ../node_modules/.bun/@agfpd+iapeer@github+agfpd+iapeer+829c2e7/node_modules/@agfpd/iapeer/src/identity/patchPeerProfile.ts
+// ../node_modules/.bun/@agfpd+iapeer@0.4.165/node_modules/@agfpd/iapeer/src/identity/patchPeerProfile.ts
 import { mkdirSync as mkdirSync2, readFileSync, rmdirSync } from "fs";
 import { join as join2 } from "path";
 
-// ../node_modules/.bun/@agfpd+iapeer@github+agfpd+iapeer+829c2e7/node_modules/@agfpd/iapeer/src/core/errors.ts
+// ../node_modules/.bun/@agfpd+iapeer@0.4.165/node_modules/@agfpd/iapeer/src/core/errors.ts
 class IapError extends Error {
   constructor(message) {
     super(message);
@@ -11,7 +11,7 @@ class IapError extends Error {
   }
 }
 
-// ../node_modules/.bun/@agfpd+iapeer@github+agfpd+iapeer+829c2e7/node_modules/@agfpd/iapeer/src/storage/atomicWrite.ts
+// ../node_modules/.bun/@agfpd+iapeer@0.4.165/node_modules/@agfpd/iapeer/src/storage/atomicWrite.ts
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, unlinkSync, writeSync } from "fs";
 import { basename, dirname, join } from "path";
 import { randomUUID } from "crypto";
@@ -46,7 +46,7 @@ function writeFileAtomicRaw(target, data, mode, tmpDir = dirname(target)) {
   }
 }
 
-// ../node_modules/.bun/@agfpd+iapeer@github+agfpd+iapeer+829c2e7/node_modules/@agfpd/iapeer/src/identity/patchPeerProfile.ts
+// ../node_modules/.bun/@agfpd+iapeer@0.4.165/node_modules/@agfpd/iapeer/src/identity/patchPeerProfile.ts
 var PROFILE_LOCK_WAIT_MS = 2000;
 var PEER_PROFILE_PATCH_PROTOCOL = 1;
 function withProfileLockSync(cwd, fn) {

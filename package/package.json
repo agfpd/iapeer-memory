@@ -42,7 +42,7 @@
     "@agfpd/iapeer-memory-core": "0.4.26"
   },
   "devDependencies": {
-    "@agfpd/iapeer": "github:agfpd/iapeer#829c2e736a318d343bd7b6b45c0e073026b9e62a",
+    "@agfpd/iapeer": "0.4.165",
     "@types/bun": "^1.2.0",
     "typescript": "^5.7.0"
   }

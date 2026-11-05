@@ -8,10 +8,10 @@ import { guardedWriteFileSync, guardedRmSync } from "@agfpd/iapeer-memory-core";
 import { liveEgress } from "./egress.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const upstreamSha = "829c2e736a318d343bd7b6b45c0e073026b9e62a";
+const upstreamSha = "28dea1f460cde103e120ac28537db343a4929b21";
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const dependency = manifest.devDependencies["@agfpd/iapeer"];
-if (dependency !== `github:agfpd/iapeer#${upstreamSha}` && dependency !== "0.4.165") {
+if (dependency !== "0.4.165") {
   throw new Error("Update vendor provenance when changing the foundation source pin");
 }
 const check = process.argv.includes("--check");
@@ -32,6 +32,7 @@ try {
   const provenance = JSON.stringify({
     upstream: "https://github.com/agfpd/iapeer",
     commit: upstreamSha,
+    version: dependency,
     source: "src/identity/patchPeerProfile.ts",
     protocol: 1,
     bun: Bun.version,

@@ -49,11 +49,9 @@ Bun version and SHA256); CI regenerates and compares both using Bun 1.3.13.
 The persistent `.iapeer/.peer-profile.protocol` marker is checked inside the
 lock; a protocol mismatch fails closed. The current protocol is 1.
 
-The migration branch temporarily pins foundation commit
-`829c2e736a318d343bd7b6b45c0e073026b9e62a` for CI while its npm candidate is
-unpublished. Before producing a release archive, replace the devDependency
-with exact registry version `0.4.165` after core publication, regenerate the
-vendor bundle/provenance and rerun the test/typecheck gate.
+The source devDependency is exact registry version `0.4.165` (registry gitHead
+`28dea1f460cde103e120ac28537db343a4929b21`). Updating it requires regenerating
+the vendor bundle/provenance and rerunning the test/typecheck gate.
 
 ## Distribution and session surfaces
 
