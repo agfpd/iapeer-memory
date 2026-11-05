@@ -5,6 +5,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { guardedWriteFileSync, guardedRmSync } from "@agfpd/iapeer-memory-core";
+import { liveEgress } from "./egress.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const upstreamSha = "829c2e736a318d343bd7b6b45c0e073026b9e62a";
@@ -15,14 +16,18 @@ if (dependency !== `github:agfpd/iapeer#${upstreamSha}` && dependency !== "0.4.1
 }
 const check = process.argv.includes("--check");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "memory-profile-vendor-"));
+const previousCwd = process.cwd();
 try {
+  process.chdir(root);
   const output = path.join(tmp, "peer-profile.js");
-  const build = Bun.spawnSync([
+  const build = liveEgress().spawnSync([
     process.execPath, "build",
     "node_modules/@agfpd/iapeer/src/identity/patchPeerProfile.ts",
     "--target", "bun", "--outfile", output,
-  ], { cwd: root, stdout: "pipe", stderr: "pipe" });
-  if (build.exitCode !== 0) throw new Error(build.stderr.toString());
+  ], { explicitBin: true });
+  if (build.refused || build.spawnError || build.exitCode !== 0) {
+    throw new Error(build.spawnError || build.stderr || "vendor build refused");
+  }
   const bundle = fs.readFileSync(output, "utf8");
   const provenance = JSON.stringify({
     upstream: "https://github.com/agfpd/iapeer",
@@ -44,5 +49,6 @@ try {
   }
   console.log(`peer-profile vendor ${check ? "verified" : "generated"}`);
 } finally {
+  process.chdir(previousCwd);
   guardedRmSync(tmp, { recursive: true, force: true });
 }
