@@ -72,12 +72,12 @@ failures remain fail-open and visible in the tool result.
 |---|---|---|
 | Provision, repair, off, repeated off | scoped JSON/plugin + provider lock | unit tests: idempotence, drift, foreign data, shared cwd, traversal |
 | MCP request identity | env header; memoryd prefix parser | real HTTP MCP test for Claude/Codex/OpenCode, same personality |
-| File writes | native after-hook → installed CLI | adapter unit tests + shared stamping tests; native runtime proof pending |
+| File writes | native after-hook → installed CLI | adapter/shared unit tests; isolated installed native write/edit probe, see docs/13; PM acceptance pending |
 | Multi-file patch and move | patch envelope + result paths | unit tests; native runtime proof pending |
 | Tags and dedup/link teaching | shared CLI → native tool output | shared hook tests; native runtime proof pending |
 | Session health | plugin initialization → shared health hook | adapter loading tested; native startup proof pending |
-| Guide/index delivery, refresh/resume | core prompt composition | depends on core adapter; lifecycle proof pending |
-| Cross-runtime same personality | shared vault/daemon/fragments | HTTP identity test; actual second-runtime lifecycle proof pending |
+| Guide/index delivery, refresh/resume | core prompt composition | installed birth + refreshed author-index probe, see docs/13; full refresh/resume cycles pending |
+| Cross-runtime same personality | shared vault/daemon/fragments | HTTP identity test for three prefixes; installed native OpenCode → Claude probe, see docs/13; native Codex/full lifecycle cycles pending |
 | Weekly transcript source | core journal + `fromTimeMs` | unit tests; live journal from the core producer pending |
 | Installed release and PM 3/3 cycles | normal core/provider lifecycle | pending; source tests do not replace installed acceptance |
 
