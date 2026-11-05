@@ -36,6 +36,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@agfpd/iapeer": "github:agfpd/iapeer#95a08490f8f868ce39c0f89413e1ca75fb63ee24",
     "@agfpd/iapeer-memory-core": "0.4.26"
   },
   "devDependencies": {

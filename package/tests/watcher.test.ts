@@ -103,9 +103,9 @@ describe("registration message", () => {
 });
 
 describe("wake_policy patch (ephemeral scriber)", () => {
-  it("merges exactly one key into the core-owned profile; idempotent; missing profile reported", () => {
+  it("merges exactly one key into the core-owned profile; missing starts empty; no-op preserves bytes", () => {
     const cwd = path.join(tmp, "scriber");
-    expect(patchWakePolicyEphemeral(cwd)).toBe("missing-profile");
+    expect(patchWakePolicyEphemeral(cwd)).toBe("written");
     fs.mkdirSync(path.join(cwd, ".iapeer"), { recursive: true });
     fs.writeFileSync(
       path.join(cwd, ".iapeer", "peer-profile.json"),
@@ -118,7 +118,72 @@ describe("wake_policy patch (ephemeral scriber)", () => {
     expect(profile.wake_policy).toBe("ephemeral");
     expect(profile.personality).toBe("scriber"); // foreign keys untouched
     expect(profile.notifier).toEqual({ triggers: [] });
+    const file = path.join(cwd, ".iapeer", "peer-profile.json");
+    const bytes = fs.readFileSync(file, "utf-8");
+    const mtime = fs.statSync(file).mtimeMs;
     expect(patchWakePolicyEphemeral(cwd)).toBe("identical");
+    expect(fs.readFileSync(file, "utf-8")).toBe(bytes);
+    expect(fs.statSync(file).mtimeMs).toBe(mtime);
+  });
+
+  it("fails closed on malformed profiles without changing bytes", () => {
+    const dir = path.join(tmp, ".iapeer");
+    fs.mkdirSync(dir);
+    const file = path.join(dir, "peer-profile.json");
+    for (const bytes of ["{broken", "null", "[]"]) {
+      fs.writeFileSync(file, bytes);
+      expect(() => patchWakePolicyEphemeral(tmp)).toThrow();
+      expect(fs.readFileSync(file, "utf-8")).toBe(bytes);
+    }
+  });
+
+  it("does not bypass the shared lock or steal it by age", () => {
+    const dir = path.join(tmp, ".iapeer");
+    fs.mkdirSync(dir);
+    const file = path.join(dir, "peer-profile.json");
+    fs.writeFileSync(file, '{"foreign":{"keep":true}}');
+    const lock = path.join(dir, ".peer-profile.lock");
+    fs.mkdirSync(lock);
+    fs.utimesSync(lock, new Date(0), new Date(0));
+    expect(() => patchWakePolicyEphemeral(tmp)).toThrow();
+    expect(fs.existsSync(lock)).toBe(true);
+    expect(fs.readFileSync(file, "utf-8")).toBe('{"foreign":{"keep":true}}');
+  });
+
+  it("reads the latest foreign fields after another writer releases the lock", async () => {
+    const dir = path.join(tmp, ".iapeer");
+    fs.mkdirSync(dir);
+    const file = path.join(dir, "peer-profile.json");
+    fs.writeFileSync(file, "{}");
+    const lock = path.join(dir, ".peer-profile.lock");
+    // A separate process can make progress while the sync patch waits.
+    const child = Bun.spawn([process.execPath, "-e", `
+      const fs = require("node:fs");
+      fs.mkdirSync(${JSON.stringify(lock)});
+      fs.writeSync(1, "locked");
+      setTimeout(() => {
+        fs.writeFileSync(${JSON.stringify(file)}, JSON.stringify({foreign: {revision: 2}}));
+        fs.rmdirSync(${JSON.stringify(lock)});
+      }, 200);
+    `], { stdout: "pipe", stderr: "pipe" });
+    try {
+      const reader = child.stdout.getReader();
+      const ready = await reader.read();
+      expect(new TextDecoder().decode(ready.value)).toBe("locked");
+      reader.releaseLock();
+      expect(patchWakePolicyEphemeral(tmp)).toBe("written");
+      expect(await child.exited).toBe(0);
+      expect(JSON.parse(fs.readFileSync(file, "utf-8"))).toEqual({
+        foreign: { revision: 2 }, wake_policy: "ephemeral",
+      });
+    } finally {
+      child.kill();
+      await child.exited;
+    }
+  });
+
+  it("keeps the memory sandbox belt around the external writer", () => {
+    expect(() => patchWakePolicyEphemeral(path.join(os.homedir(), ".iapeer", "peers", "never-write"))).toThrow();
   });
 });
 

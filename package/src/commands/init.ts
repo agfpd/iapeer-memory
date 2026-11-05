@@ -499,12 +499,11 @@ export async function cmdInit(argv: string[], egress: Egress): Promise<number> {
       // the migration class an ephemeral flip structurally kills. Patch the one
       // key into each core-owned profile, no-clobber.
       const wakePolicies = roleEntries.map((r) => `${r.role}:${patchWakePolicyEphemeral(r.peerCwd)}`);
-      const wakeOk = wakePolicies.every((w) => !w.endsWith("missing-profile"));
       step(
         "roles",
         `${roleEntries.map((r) => rolePersonality(r.role as (typeof ROLE_NAMES)[number])).join(", ")} ` +
           `(doctrines v${version}, wake_policy ${wakePolicies.join(" ")}, manifest ${paths.rolesManifestPath})`,
-        rolesOk && roleEntries.length === ROLE_NAMES.length && wakeOk,
+        rolesOk && roleEntries.length === ROLE_NAMES.length,
       );
     }
   }

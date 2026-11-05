@@ -35,8 +35,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { patchPeerProfile } from "@agfpd/iapeer/peer-profile";
 import { IAPEER_BIN, type Egress } from "./egress.js";
-import { guardedWriteFileSync, guardedRenameSync } from "@agfpd/iapeer-memory-core";
+import { assertSandboxWritablePath, guardedWriteFileSync, guardedRenameSync } from "@agfpd/iapeer-memory-core";
 
 export const WATCHER_TRIGGER_ID = "iapeer-memory-memoryd";
 /** Weekly DreamWeaver tick. A notifier TIMER straight to DreamWeaver, GATED
@@ -125,26 +126,23 @@ export function writeDreamGateScript(opts: {
 /**
  * Declare the scriber an ephemeral worker (clean window per delivery,
  * M1/M2/M3 — core canon «wake_policy ephemeral»). The profile is a CORE
- * file: no-clobber merge of exactly one key, atomic write.
+ * file: patch exactly one key under the foundation's shared profile lock.
  */
 export function patchWakePolicyEphemeral(
   peerCwd: string,
-): "written" | "identical" | "missing-profile" {
+): "written" | "identical" {
   const profilePath = path.join(peerCwd, ".iapeer", "peer-profile.json");
-  let profile: Record<string, unknown>;
-  try {
-    const raw = JSON.parse(fs.readFileSync(profilePath, "utf-8")) as unknown;
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "missing-profile";
-    profile = raw as Record<string, unknown>;
-  } catch {
-    return "missing-profile";
-  }
-  if (profile.wake_policy === "ephemeral") return "identical";
-  profile.wake_policy = "ephemeral";
-  const tmp = `${profilePath}.tmp`;
-  guardedWriteFileSync(tmp, `${JSON.stringify(profile, null, 2)}\n`, "utf-8");
-  guardedRenameSync(tmp, profilePath);
-  return "written";
+  // The upstream writer does not know memory's test-sandbox boundary.
+  assertSandboxWritablePath(profilePath, "patch-peer-profile");
+  let result: "written" | "identical" = "identical";
+  patchPeerProfile(peerCwd, (profile) => {
+    if (profile.wake_policy === "ephemeral") return;
+    profile.wake_policy = "ephemeral";
+    result = "written";
+  });
+  // Corrupt profiles, filesystem errors and lock timeouts propagate. Never
+  // hide a failed patch or fall back to an unlocked full-profile write.
+  return result;
 }
 
 export function registrationMessage(opts: {

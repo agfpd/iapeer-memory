@@ -12,7 +12,7 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "allowImportingTsExtensions": false,
+    "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": false,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true

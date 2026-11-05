@@ -169,12 +169,10 @@ export function cmdUpdate(argv: string[], egress: Egress): number {
     // class an ephemeral flip kills). Re-assert ephemeral on every update
     // (no-clobber, idempotent — "identical" when already set).
     const wp = manifest.roles.map((r) => `${r.role}:${patchWakePolicyEphemeral(r.peerCwd)}`);
-    const wpMissing = wp.filter((w) => w.endsWith("missing-profile")).length;
     step(
       "wake_policy",
-      `${wp.join(" ")} (ephemeral — fresh session per wake)` +
-        (wpMissing ? ` — ${wpMissing} profile(s) not yet born (peer birth creates them)` : ""),
-      true, // best-effort reconciliation; a missing peer profile is a birth concern, never an update failure
+      `${wp.join(" ")} (ephemeral — fresh session per wake)`,
+      true, // Patch failures throw; they must not be reported as success.
     );
   }
 

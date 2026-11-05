@@ -27,6 +27,27 @@ iapeer-memory uses the core's ready-made mechanisms wherever they exist:
 | Peer creation | curators are created as ordinary team peers |
 | MCP over HTTP + identity | `memoryd` serves the search tools; by identity it tells its own operative memory from another's |
 
+## Cooperative profile writes
+
+`init` and `update` set curator `wake_policy` to `ephemeral` through the
+foundation's `patchPeerProfile` API (`@agfpd/iapeer/peer-profile`, the lightweight
+export). The latest profile is read inside the shared
+`<cwd>/.iapeer/.peer-profile.lock`; only `wake_policy` is changed. Missing
+profiles start empty, unchanged profiles are not rewritten, and malformed JSON,
+filesystem errors or a two-second lock timeout fail the command without an
+unlocked fallback. A lock is never stolen by age.
+
+These CLI commands are the only profile writers in iapeer-memory; `memoryd`
+does not write peer profiles. Migration still requires a coordinated window
+for **all ecosystem writers**, because an older unlocked writer can overwrite
+a locked patch. Release and restart coordination belongs to the host operator.
+
+The migration branch temporarily pins foundation commit
+`95a08490f8f868ce39c0f89413e1ca75fb63ee24` for CI while its npm candidate is
+unpublished. This is **not a releasable dependency**: before producing a release
+archive, replace it with exact registry version `0.4.165` after core publication
+and rerun the test/typecheck gate.
+
 ## Distribution and session surfaces
 
 The system is distributed as a single npm package, `@agfpd/iapeer-memory` — and that IS the system: daemon, search, curators, vault, install, and update.
