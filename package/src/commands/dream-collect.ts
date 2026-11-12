@@ -12,8 +12,9 @@
  *     (claude per-peer dir; codex host-wide pool filtered by the payload's
  *     `session_meta.payload.cwd` == realpath(cwd) — host fact, verified
  *     against a live rollout; opencode — the core's per-personality journal
- *     `<privateDir>/events.jsonl`, the dir answered by `iapeer private-dir`,
- *     with a `fromTimeMs` window start, never the native SQLite), and deterministic candidate flags inside the
+ *     `<privateDir>/events.jsonl` plus its rotated generations
+ *     `events.jsonl.4 … .1` (core ≥ 0.4.169), the dir answered by
+ *     `iapeer private-dir`, with a `fromTimeMs` window start, never the native SQLite), and deterministic candidate flags inside the
  *     in-window notes (long `description`; broken path/env references);
  *   - a folder with no in-window activity is SKIPPED — it never reaches an
  *     LLM (the «папка без работы → ноль LLM» criterion).
@@ -80,12 +81,20 @@ export type TranscriptRuntime = "claude" | "codex" | "opencode";
 
 export type ResolvedTranscripts = {
   runtime: TranscriptRuntime;
-  /** Concrete files in window — the LLM never globs, it reads this list. */
+  /** Concrete files in window — the LLM never globs, it reads this list.
+   *  opencode: the in-window journal generations ordered OLDEST → NEWEST
+   *  (`events.jsonl.4 … .1`, then the live `events.jsonl`). */
   files: string[];
-  /** opencode only: its per-personality journal is append-only and never
-   *  rotated, so the file spans all time — the reader takes only lines whose
-   *  `time` (epoch ms) is ≥ this window start. */
+  /** opencode only: a generation spans more than the window, so the reader
+   *  takes only lines whose `time` (epoch ms) is ≥ this window start, and
+   *  dedups lines by `seq` (monotonic across generations). */
   fromTimeMs?: number;
+  /** opencode only: where the main sessions are identified — EVERY existing
+   *  journal generation (`runtime.ready` lines, even out of window: a process
+   *  may live all week while its launch line sits in an older generation) plus
+   *  `state.json` (its `sessionID` is the current main session, recoverable
+   *  even after its `runtime.ready` generation was rotated away). */
+  sessionSources?: string[];
   /** opencode only: the core did not answer the journal location — the
    *  runtime is listed with no files so the gap is visible, not silent. */
   error?: string;
@@ -383,22 +392,52 @@ export function indexCodexSessionsByCwd(
   return byCwd;
 }
 
+/** Rotated generations the core keeps (iapeer docs/20: `.1` … `.4`). */
+export const OPENCODE_JOURNAL_GENERATIONS = 4;
+
+/** All existing journal generations of a private dir, OLDEST → NEWEST:
+ *  `events.jsonl.4 … .1`, then the live `events.jsonl`. */
+export function listOpencodeJournal(privateDir: string): TFile[] {
+  const names = [
+    ...Array.from({ length: OPENCODE_JOURNAL_GENERATIONS }, (_, i) => `events.jsonl.${OPENCODE_JOURNAL_GENERATIONS - i}`),
+    "events.jsonl",
+  ];
+  const out: TFile[] = [];
+  for (const name of names) {
+    const fp = path.join(privateDir, name);
+    try {
+      const st = fs.statSync(fp);
+      if (st.isFile()) out.push({ path: fp, mtimeMs: st.mtimeMs });
+    } catch {
+      /* absent generation */
+    }
+  }
+  return out;
+}
+
 /** OpenCode: the core is the single producer of a per-personality journal
  *  `<privateDir>/events.jsonl` (iapeer docs/20-opencode.md; the directory is
  *  answered by the core, never derived here); consumers never read the
- *  native OpenCode SQLite. One file per personality (never rotated) — in
- *  window iff touched since the cutoff. */
-export function resolveOpencodeTranscript(
-  privateDir: string,
-  cutoffMs: number,
-): TFile | null {
-  const fp = path.join(privateDir, "events.jsonl");
+ *  native OpenCode SQLite. Since core 0.4.169 the journal ROTATES at 8 MiB
+ *  into `events.jsonl.1 … .4` (rename only — a generation's mtime is the time
+ *  of its last line), so a week can span several generations, and a freshly
+ *  rotated live file can hold only minutes of it. Each generation is in
+ *  window iff ITS OWN mtime ≥ cutoff (an older mtime ⇒ every line in it
+ *  predates the window). Returned OLDEST → NEWEST. */
+export function resolveOpencodeTranscript(privateDir: string, cutoffMs: number): TFile[] {
+  return listOpencodeJournal(privateDir).filter((f) => f.mtimeMs >= cutoffMs);
+}
+
+/** Main-session sources: every existing generation + `state.json`. */
+export function opencodeSessionSources(privateDir: string): string[] {
+  const out = listOpencodeJournal(privateDir).map((f) => f.path);
+  const state = path.join(privateDir, "state.json");
   try {
-    const st = fs.statSync(fp);
-    return st.isFile() && st.mtimeMs >= cutoffMs ? { path: fp, mtimeMs: st.mtimeMs } : null;
+    if (fs.statSync(state).isFile()) out.push(state);
   } catch {
-    return null;
+    /* no state yet */
   }
+  return out;
 }
 
 function realpathOrSelf(p: string): string {
@@ -425,20 +464,26 @@ export function resolveTranscripts(
     opencodePrivateDir?: PrivateDirResolver;
   },
 ): ResolvedTranscripts[] {
-  const tagged: Array<{ runtime: TranscriptRuntime; file: TFile }> = [];
+  // A cap UNIT is one file, except the opencode journal: its generations are
+  // one logical stream and are kept or dropped together (ranked by the
+  // newest generation), never split by the cap.
+  const tagged: Array<{ runtime: TranscriptRuntime; files: TFile[]; mtimeMs: number }> = [];
+  const one = (runtime: TranscriptRuntime, file: TFile) =>
+    tagged.push({ runtime, files: [file], mtimeMs: file.mtimeMs });
   let opencodeError: string | undefined;
+  let opencodeSources: string[] | undefined;
   const runtimes: TranscriptRuntime[] = [];
   if (peer.runtimes.includes("claude")) {
     runtimes.push("claude");
     const dir = path.join(opts.home, ".claude", "projects", claudeProjectSlug(peer.cwd));
     for (const file of resolveClaudeTranscripts(dir, opts.cutoffMs)) {
-      tagged.push({ runtime: "claude", file });
+      one("claude", file);
     }
   }
   if (peer.runtimes.includes("codex")) {
     runtimes.push("codex");
     for (const file of opts.codexIndex.get(realpathOrSelf(peer.cwd)) ?? []) {
-      tagged.push({ runtime: "codex", file });
+      one("codex", file);
     }
   }
   if (peer.runtimes.includes("opencode")) {
@@ -447,8 +492,11 @@ export function resolveTranscripts(
       ? opts.opencodePrivateDir(peer.personality)
       : { error: "no core private-dir resolver" };
     if ("dir" in q) {
-      const file = resolveOpencodeTranscript(q.dir, opts.cutoffMs);
-      if (file) tagged.push({ runtime: "opencode", file });
+      const files = resolveOpencodeTranscript(q.dir, opts.cutoffMs);
+      if (files.length > 0) {
+        tagged.push({ runtime: "opencode", files, mtimeMs: Math.max(...files.map((f) => f.mtimeMs)) });
+        opencodeSources = opencodeSessionSources(q.dir);
+      }
     } else {
       opencodeError = q.error;
     }
@@ -457,17 +505,25 @@ export function resolveTranscripts(
   // is a single runtime flooding phase D).
   let kept = tagged;
   if (opts.cap > 0 && tagged.length > opts.cap) {
-    kept = [...tagged].sort((a, b) => b.file.mtimeMs - a.file.mtimeMs).slice(0, opts.cap);
+    kept = [...tagged].sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, opts.cap);
   }
-  return runtimes.map((runtime) => ({
-    runtime,
-    files: kept
-      .filter((t) => t.runtime === runtime)
-      .map((t) => t.file.path)
-      .sort(),
-    ...(runtime === "opencode" ? { fromTimeMs: opts.cutoffMs } : {}),
-    ...(runtime === "opencode" && opencodeError ? { error: opencodeError } : {}),
-  }));
+  return runtimes.map((runtime) => {
+    const units = kept.filter((t) => t.runtime === runtime);
+    // opencode keeps the producer's OLDEST → NEWEST generation order (the
+    // reader dedups by `seq`); file-per-session runtimes sort by path.
+    const files =
+      runtime === "opencode"
+        ? units.flatMap((t) => t.files.map((f) => f.path))
+        : units.flatMap((t) => t.files.map((f) => f.path)).sort();
+    const keptOpencode = runtime === "opencode" && files.length > 0;
+    return {
+      runtime,
+      files,
+      ...(runtime === "opencode" ? { fromTimeMs: opts.cutoffMs } : {}),
+      ...(keptOpencode && opencodeSources ? { sessionSources: opencodeSources } : {}),
+      ...(runtime === "opencode" && opencodeError ? { error: opencodeError } : {}),
+    };
+  });
 }
 
 // ── orchestration ──────────────────────────────────────────────────────────

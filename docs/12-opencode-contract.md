@@ -86,15 +86,26 @@ configuration; managed settings can override it. Synthetic/cloud trials need
 an OS-enforced synthetic-only file/network boundary plus an effective-config
 check. Fresh HOME and inline config alone are not an isolation proof.
 Weekly transcript collection (`dream-collect`) reads the core's
-per-personality journal `<privateDir>/events.jsonl` (directory from
+per-personality journal `<privateDir>/events.jsonl` and its rotated
+generations `events.jsonl.4 … .1` (directory from
 `iapeer private-dir`; an unanswered query lists the runtime with an `error`
 and no files)
 (iapeer `docs/20-opencode.md`: the core is its single producer; the native
-OpenCode SQLite is never read). The journal is never rotated, so the task
-carries `fromTimeMs` (window start) and the DreamWeaver judge reads only
-lines with `time ≥ fromTimeMs`, of main sessions only (the `session.id` of
-`runtime.ready` events across the whole file — written on every launch,
-resume included, while a process may outlive the window; child/subagent sessions share the journal but their
+OpenCode SQLite is never read). Since core 0.4.169 the journal rotates:
+before an append that would push the live file past 8 MiB the core renames
+it to `.1`, shifting older generations up to `.4` and dropping the oldest;
+`seq` stays monotonic across generations. A week can therefore span several
+generations, and a freshly rotated live file can hold only minutes of it.
+Each generation is in the window iff its own mtime (rename preserves it, so
+it is the time of its last line) is ≥ the cutoff; `files` lists them oldest
+→ newest, and the per-folder transcript cap keeps or drops them as one unit.
+A generation still spans more than the window, so the task carries
+`fromTimeMs` (window start) and the DreamWeaver judge reads only lines with
+`time ≥ fromTimeMs`, one per `seq`, of main sessions only (the `session.id`
+of `runtime.ready` events across every generation in `sessionSources`, plus
+the `sessionID` of `state.json` — `runtime.ready` is written on every launch,
+resume included, while a process may outlive the window and its launch line
+may sit in an out-of-window or already dropped generation; child/subagent sessions share the journal but their
 user turns are agent-written), upserting streamed parts by `part.id`. Scoping is by personality, so a shared cwd
 does not leak another peer's sessions. Until the core's journal producer
 ships, an OpenCode-only peer simply contributes no transcripts — the runtime

@@ -325,7 +325,65 @@ describe("resolveTranscripts — opencode journal", () => {
       { personality: "p", cwd: "/nope", runtimes: ["opencode"] },
       { home: tmp, cutoffMs, codexIndex: new Map(), cap: 0, opencodePrivateDir: (p) => ({ dir: path.join(root, "state", "opencode", p) }) },
     );
-    expect(got).toEqual([{ runtime: "opencode", files: [fp], fromTimeMs: cutoffMs }]);
+    expect(got).toEqual([{ runtime: "opencode", files: [fp], fromTimeMs: cutoffMs, sessionSources: [fp] }]);
+  });
+
+  it("rotated generations: each by its own mtime, OLDEST → NEWEST; session sources span all + state.json", () => {
+    const dir = path.join(tmp, "iaroot", "state", "opencode", "p");
+    const live = path.join(dir, "events.jsonl");
+    writeAt(live, "{}\n", (NOW - 60_000) / 1000); // freshly rotated live file
+    writeAt(`${live}.1`, "{}\n", (NOW - 2 * DAY) / 1000);
+    writeAt(`${live}.2`, "{}\n", (NOW - 5 * DAY) / 1000);
+    writeAt(`${live}.3`, "{}\n", (NOW - 9 * DAY) / 1000); // every line predates the window
+    writeAt(path.join(dir, "state.json"), "{}", inWindowSec);
+    const cutoffMs = NOW - 7 * DAY;
+    const got = resolveTranscripts(
+      { personality: "p", cwd: "/nope", runtimes: ["opencode"] },
+      { home: tmp, cutoffMs, codexIndex: new Map(), cap: 0, opencodePrivateDir: () => ({ dir }) },
+    );
+    expect(got).toEqual([
+      {
+        runtime: "opencode",
+        files: [`${live}.2`, `${live}.1`, live],
+        fromTimeMs: cutoffMs,
+        sessionSources: [`${live}.3`, `${live}.2`, `${live}.1`, live, path.join(dir, "state.json")],
+      },
+    ]);
+  });
+
+  it("a week entirely in .1 with an idle live file is still collected", () => {
+    const dir = path.join(tmp, "iaroot", "state", "opencode", "p");
+    const live = path.join(dir, "events.jsonl");
+    writeAt(live, "{}\n", (NOW - 8 * DAY) / 1000);
+    writeAt(`${live}.1`, "{}\n", inWindowSec);
+    const got = resolveTranscripts(
+      { personality: "p", cwd: "/nope", runtimes: ["opencode"] },
+      { home: tmp, cutoffMs: NOW - 7 * DAY, codexIndex: new Map(), cap: 0, opencodePrivateDir: () => ({ dir }) },
+    );
+    expect(got[0]!.files).toEqual([`${live}.1`]);
+  });
+
+  it("the per-folder cap keeps or drops the journal generations as ONE unit", () => {
+    const dir = path.join(tmp, "iaroot", "state", "opencode", "p");
+    const live = path.join(dir, "events.jsonl");
+    writeAt(live, "{}\n", (NOW - 1000) / 1000);
+    for (let g = 1; g <= 4; g++) writeAt(`${live}.${g}`, "{}\n", (NOW - g * DAY) / 1000);
+    const real = fs.mkdtempSync(path.join(os.tmpdir(), "dc-oc-cap-"));
+    try {
+      const codexIndex = new Map([
+        [fs.realpathSync(real), [{ path: "/x/c.jsonl", mtimeMs: NOW - 2000 }, { path: "/x/old.jsonl", mtimeMs: NOW - 6 * DAY }]],
+      ]);
+      const got = resolveTranscripts(
+        { personality: "p", cwd: real, runtimes: ["codex", "opencode"] },
+        { home: tmp, cutoffMs: NOW - 7 * DAY, codexIndex, cap: 2, opencodePrivateDir: () => ({ dir }) },
+      );
+      expect(got.find((t) => t.runtime === "codex")!.files).toEqual(["/x/c.jsonl"]);
+      expect(got.find((t) => t.runtime === "opencode")!.files).toEqual([
+        `${live}.4`, `${live}.3`, `${live}.2`, `${live}.1`, live,
+      ]);
+    } finally {
+      fs.rmSync(real, { recursive: true, force: true });
+    }
   });
 
   it("stale or absent journal yields an empty opencode entry (runtime still listed)", () => {

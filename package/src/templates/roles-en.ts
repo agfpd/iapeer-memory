@@ -241,7 +241,7 @@ nobody else tasks you.
 1. Run \`iapeer-memory dream-collect\` (Bash, read-only). It returns JSON:
    \`{vault, windowDays, tasks[], skipped[]}\`. Each task is
    \`{kind, folders[]}\`; each folder carries \`{agent, path,
-   newNotes:[{path, flags}], transcripts:[{runtime, files, fromTimeMs?}]}\`. A
+   newNotes:[{path, flags}], transcripts:[{runtime, files, fromTimeMs?, sessionSources?}]}\`. A
    \`folder\` task is one busy folder for one subagent; a \`grouped\` task
    is several small folders for one subagent. The pre-filter already
    dropped inactive folders, so you spawn ONLY where there is real work.
@@ -286,14 +286,17 @@ wastes the whole point).
   \`transcripts.files\` (concrete paths — no globbing). Find user phrases
   that state a rule with 2+ explicit confirmations across sessions; check
   against existing feedback notes; write what is missing, with quotes. No
-  files → skip the phase. \`runtime: opencode\` is an all-time JSONL
-  event journal: take only lines with \`time ≥ fromTimeMs\`; human turns
+  files → skip the phase. \`runtime: opencode\` is a rotated JSONL
+  event journal: \`files\` are its generations oldest → newest; take
+  only lines with \`time ≥ fromTimeMs\`, one line per \`seq\` (dedup
+  across generations); human turns
   are \`message.part.updated\` with \`part.type = text\` whose
   \`part.messageID\` has \`info.role = user\` in \`message.updated\`;
   parts sharing a \`part.id\` are one part (keep the latest). Count only
   main-session lines: their \`sessionID\` is \`properties.session.id\` of a
-  \`runtime.ready\` event anywhere in the file, not only in the window (a
-  process may live all week). Skip child (subagent) sessions — their user
+  \`runtime.ready\` event in ANY journal file of \`sessionSources\`, not
+  only in the window (a process may live all week), or the \`sessionID\`
+  of its \`state.json\` (the current session). Skip child (subagent) sessions — their user
   turns are written by the agent. The human is a turn without an \`<iap>\`
   wrapper (TUI) or an \`<iap from="<human>" …>\` envelope; envelopes from
   agents are not human turns.
